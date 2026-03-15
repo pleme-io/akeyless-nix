@@ -101,6 +101,12 @@ in {
       default = false;
       description = "Pass --ignore-passwd to skip owner/group lookups (useful in CI/dry-run).";
     };
+
+    templateEngine = lib.mkOption {
+      type = lib.types.enum [ "placeholder" "igata" ];
+      default = "placeholder";
+      description = "Template engine for rendering (placeholder = legacy hash-based, igata = MiniJinja).";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -111,6 +117,7 @@ in {
       echo "akeyless-nix: installing secrets..."
       ${cfg.package}/bin/akeyless-install-secrets install \
         ${lib.optionalString cfg.ignorePasswd "--ignore-passwd "}\
+        --template-engine ${cfg.templateEngine} \
         ${manifestFile} || \
         echo "akeyless-nix: WARNING -- secret installation failed"
 

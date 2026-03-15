@@ -37,6 +37,7 @@ in {
           "${cfg.package}/bin/akeyless-install-secrets"
           "install"
         ] ++ lib.optionals cfg.ignorePasswd [ "--ignore-passwd" ]
+          ++ [ "--template-engine" cfg.templateEngine ]
           ++ [ stableManifestPath ];
         RunAtLoad = true;
         KeepAlive = false;

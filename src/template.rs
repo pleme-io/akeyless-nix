@@ -126,13 +126,16 @@ pub fn sanitize_var_name(path: &str) -> String {
         .replace('-', "_")
 }
 
-/// Simple deterministic hash for placeholder generation.
+/// SHA-256 hash for placeholder generation.
+///
+/// Must match `builtins.hashString "sha256"` in the Nix module so that
+/// placeholders generated at eval time are found by the Rust binary at
+/// activation time.
 pub(crate) fn sha256_hex(input: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    input.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    format!("{:064x}", hasher.finalize())
 }
 
 #[cfg(test)]
@@ -212,6 +215,23 @@ mod tests {
         let h2 = sha256_hex("/pleme/token");
         assert_eq!(h1, h2);
         assert_ne!(h1, sha256_hex("/pleme/other"));
+    }
+
+    #[test]
+    fn sha256_hex_is_64_chars() {
+        let h = sha256_hex("/pleme/token");
+        assert_eq!(h.len(), 64, "SHA-256 hex digest must be 64 characters, got {}", h.len());
+    }
+
+    #[test]
+    fn sha256_hex_matches_nix_builtins_hash_string() {
+        // Verified via: nix-instantiate --eval -E 'builtins.hashString "sha256" "/pleme/token"'
+        let expected = "9600f4f62653c71f3daed10e123128ba7403a07835c4aa5591cd1a2b833aa6ce";
+        let actual = sha256_hex("/pleme/token");
+        assert_eq!(
+            actual, expected,
+            "sha256_hex must match Nix's builtins.hashString \"sha256\""
+        );
     }
 
     // ── IgataEngine tests ──────────────────────────────────────────────

@@ -65,6 +65,12 @@ in {
       default = false;
       description = "Skip owner/group lookups (for CI/dry-run).";
     };
+
+    templateEngine = lib.mkOption {
+      type = lib.types.enum [ "placeholder" "igata" ];
+      default = "placeholder";
+      description = "Template engine for rendering (placeholder = legacy hash-based, igata = MiniJinja).";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -74,6 +80,7 @@ in {
     home.activation.akeylessSecrets = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       ${cfg.package}/bin/akeyless-install-secrets install \
         ${lib.optionalString cfg.ignorePasswd "--ignore-passwd "}\
+        --template-engine ${cfg.templateEngine} \
         ${manifestFile} \
         || echo "akeyless-nix: WARNING — secret installation failed (offline?)"
     '';
