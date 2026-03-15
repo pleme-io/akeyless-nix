@@ -64,3 +64,43 @@ pub fn load(path: &Path) -> Result<Manifest> {
     serde_json::from_str(&content)
         .with_context(|| format!("parsing manifest {}", path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_manifest() {
+        let json = r#"{
+            "secrets": [
+                {
+                    "akeyless_path": "/pleme/test/hello",
+                    "file_path": "/tmp/hello",
+                    "mode": "0600"
+                }
+            ],
+            "templates": [],
+            "generations_dir": "/tmp/gens",
+            "symlink_path": "/tmp/current",
+            "keep_generations": 2
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets.len(), 1);
+        assert_eq!(manifest.secrets[0].akeyless_path, "/pleme/test/hello");
+        assert_eq!(manifest.secrets[0].mode, "0600");
+        assert_eq!(manifest.keep_generations, 2);
+    }
+
+    #[test]
+    fn test_default_mode() {
+        let json = r#"{
+            "secrets": [{"akeyless_path": "/test", "file_path": "/tmp/test"}],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets[0].mode, "0400");
+        assert_eq!(manifest.keep_generations, 2);
+    }
+}

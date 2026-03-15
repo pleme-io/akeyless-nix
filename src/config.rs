@@ -58,7 +58,7 @@ fn default_true() -> bool {
     true
 }
 
-fn expand_path(path: &str) -> PathBuf {
+pub(crate) fn expand_path(path: &str) -> PathBuf {
     let expanded = shellexpand::tilde(path);
     PathBuf::from(expanded.as_ref())
 }
@@ -100,5 +100,33 @@ impl Config {
 
     pub fn cache_dir(&self) -> PathBuf {
         expand_path(&self.cache.dir)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        // When no config file exists, defaults should work
+        let config = Config {
+            auth: AuthConfig {
+                access_id_file: "~/.config/akeyless/access-id".to_string(),
+                access_key_file: "~/.config/akeyless/access-key".to_string(),
+            },
+            api_url: "https://api.akeyless.io".to_string(),
+            cache: CacheConfig::default(),
+        };
+
+        assert_eq!(config.api_url, "https://api.akeyless.io");
+        assert!(config.cache.enabled);
+        assert_eq!(config.cache.ttl_seconds, 3600);
+    }
+
+    #[test]
+    fn test_expand_path() {
+        let path = expand_path("~/test");
+        assert!(!path.to_string_lossy().contains('~'));
     }
 }

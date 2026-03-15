@@ -10,6 +10,7 @@ mod generation;
 mod manifest;
 mod platform;
 mod template;
+mod traits;
 mod write;
 
 #[derive(Parser)]

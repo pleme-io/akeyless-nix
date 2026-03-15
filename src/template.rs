@@ -54,7 +54,7 @@ pub fn render_all(
 }
 
 /// Simple SHA-256 hex digest for placeholder generation.
-fn sha256_hex(input: &str) -> String {
+pub(crate) fn sha256_hex(input: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     // Use a deterministic hasher for placeholder generation
@@ -62,4 +62,53 @@ fn sha256_hex(input: &str) -> String {
     let mut hasher = DefaultHasher::new();
     input.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_replaces_placeholders() {
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/pleme/token".to_string(), "my-secret-token".to_string());
+
+        let hash = sha256_hex("/pleme/token");
+        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+
+        let templates = vec![TemplateSpec {
+            name: "config".to_string(),
+            content: format!("token: {placeholder}"),
+            file_path: "/tmp/config".to_string(),
+            mode: "0600".to_string(),
+            owner: String::new(),
+            group: String::new(),
+        }];
+
+        let rendered = render_all(&templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(rendered[0].content, "token: my-secret-token");
+    }
+
+    #[test]
+    fn test_render_multiple_placeholders() {
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/a".to_string(), "val-a".to_string());
+        secrets.insert("/b".to_string(), "val-b".to_string());
+
+        let ha = sha256_hex("/a");
+        let hb = sha256_hex("/b");
+
+        let templates = vec![TemplateSpec {
+            name: "multi".to_string(),
+            content: format!("a=<AKEYLESS:{ha}:PLACEHOLDER> b=<AKEYLESS:{hb}:PLACEHOLDER>"),
+            file_path: "/tmp/multi".to_string(),
+            mode: "0600".to_string(),
+            owner: String::new(),
+            group: String::new(),
+        }];
+
+        let rendered = render_all(&templates, &secrets).unwrap();
+        assert_eq!(rendered[0].content, "a=val-a b=val-b");
+    }
 }

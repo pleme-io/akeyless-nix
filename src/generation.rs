@@ -136,3 +136,59 @@ fn sanitize_name(path: &str) -> String {
     path.trim_start_matches('/')
         .replace('/', "-")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_name() {
+        assert_eq!(sanitize_name("/pleme/prod/db-password"), "pleme-prod-db-password");
+        assert_eq!(sanitize_name("/a/b/c"), "a-b-c");
+        assert_eq!(sanitize_name("no-slash"), "no-slash");
+    }
+
+    #[test]
+    fn test_generation_lifecycle() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        // Create 3 generations
+        let secrets = BTreeMap::new();
+        let templates = vec![];
+
+        let g1 = create(&manifest, &secrets, &templates, true).unwrap();
+        assert_eq!(g1.number, 1);
+
+        let g2 = create(&manifest, &secrets, &templates, true).unwrap();
+        assert_eq!(g2.number, 2);
+
+        let g3 = create(&manifest, &secrets, &templates, true).unwrap();
+        assert_eq!(g3.number, 3);
+
+        // Prune should keep only 2
+        prune(&manifest).unwrap();
+
+        let mut remaining: Vec<u64> = std::fs::read_dir(dir.join("generations")).unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+            .collect();
+        remaining.sort();
+
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&2));
+        assert!(remaining.contains(&3));
+        assert!(!remaining.contains(&1));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
