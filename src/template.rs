@@ -120,10 +120,12 @@ impl TemplateEngine for IgataEngine {
 ///
 /// `/pleme/github/token` → `pleme_github_token`
 /// `/pleme/prod/db-password` → `pleme_prod_db_password`
+/// `/app.prod/token` → `app_prod_token`
 pub fn sanitize_var_name(path: &str) -> String {
     path.trim_start_matches('/')
         .replace('/', "_")
         .replace('-', "_")
+        .replace('.', "_")
 }
 
 /// SHA-256 hash for placeholder generation.
@@ -324,8 +326,9 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_dots_preserved() {
-        assert_eq!(sanitize_var_name("/app.prod/token"), "app.prod_token");
+    fn sanitize_dots_replaced() {
+        // Dots become underscores — MiniJinja treats dots as attribute access
+        assert_eq!(sanitize_var_name("/app.prod/token"), "app_prod_token");
     }
 
     #[test]
