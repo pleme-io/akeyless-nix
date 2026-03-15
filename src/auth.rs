@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 use crate::config::Config;
 
@@ -14,29 +14,21 @@ pub async fn authenticate(config: &Config) -> Result<String> {
         .trim()
         .to_string();
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{}/auth", config.api_url))
-        .json(&serde_json::json!({
-            "access-id": access_id,
-            "access-key": access_key,
-            "access-type": "access_key"
-        }))
-        .send()
+    let mut api_config = akeyless_api::apis::configuration::Configuration::new();
+    api_config.base_path = config.api_url.clone();
+
+    let auth_req = akeyless_api::models::Auth {
+        access_id: Some(access_id),
+        access_key: Some(access_key),
+        access_type: Some("access_key".to_string()),
+        ..Default::default()
+    };
+
+    let output = akeyless_api::apis::v2_api::auth(&api_config, auth_req)
         .await
-        .context("sending auth request to Akeyless")?;
+        .context("authenticating to Akeyless")?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        bail!("Akeyless auth failed ({status}): {body}");
-    }
-
-    let body: serde_json::Value = resp.json().await.context("parsing auth response")?;
-    let token = body["token"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("no token in auth response"))?
-        .to_string();
-
-    Ok(token)
+    output
+        .token
+        .ok_or_else(|| anyhow::anyhow!("no token in auth response"))
 }

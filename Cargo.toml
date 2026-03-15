@@ -23,7 +23,7 @@ serde_json = "1"
 anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.40", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+akeyless-api = { git = "https://github.com/pleme-io/akeyless-api", features = ["rustls-tls"] }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6.0"
