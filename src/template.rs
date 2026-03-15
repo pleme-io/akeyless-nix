@@ -140,4 +140,77 @@ mod tests {
         let rendered = render_all(&templates, &secrets).unwrap();
         assert_eq!(rendered[0].content, "a=val-a b=val-b");
     }
+
+    #[test]
+    fn test_render_secret_with_newlines() {
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "/cert/tls".to_string(),
+            "-----BEGIN CERTIFICATE-----\nMIIBxTCCAW...\n-----END CERTIFICATE-----\n".to_string(),
+        );
+
+        let hash = sha256_hex("/cert/tls");
+        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+
+        let templates = vec![TemplateSpec {
+            name: "tls-config".to_string(),
+            content: format!("cert: |\n  {placeholder}"),
+            file_path: "/tmp/tls".to_string(),
+            mode: "0600".to_string(),
+            owner: String::new(),
+            group: String::new(),
+            uid: None,
+            gid: None,
+        }];
+
+        let rendered = render_all(&templates, &secrets).unwrap();
+        assert!(rendered[0].content.contains("BEGIN CERTIFICATE"));
+        assert!(rendered[0].content.contains("END CERTIFICATE"));
+        assert!(!rendered[0].content.contains("AKEYLESS"));
+    }
+
+    #[test]
+    fn test_render_secret_with_special_chars() {
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "/db/conn".to_string(),
+            "p@ss$w0rd!&<>\"'\\".to_string(),
+        );
+
+        let hash = sha256_hex("/db/conn");
+        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+
+        let templates = vec![TemplateSpec {
+            name: "db-config".to_string(),
+            content: format!("password: {placeholder}"),
+            file_path: "/tmp/db".to_string(),
+            mode: "0600".to_string(),
+            owner: String::new(),
+            group: String::new(),
+            uid: None,
+            gid: None,
+        }];
+
+        let rendered = render_all(&templates, &secrets).unwrap();
+        assert_eq!(rendered[0].content, "password: p@ss$w0rd!&<>\"'\\");
+    }
+
+    #[test]
+    fn test_render_empty_templates() {
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/a".to_string(), "val-a".to_string());
+
+        let rendered = render_all(&[], &secrets).unwrap();
+        assert!(rendered.is_empty());
+    }
+
+    #[test]
+    fn test_sha256_hex_deterministic() {
+        let h1 = sha256_hex("/pleme/token");
+        let h2 = sha256_hex("/pleme/token");
+        assert_eq!(h1, h2);
+
+        let h3 = sha256_hex("/pleme/other");
+        assert_ne!(h1, h3);
+    }
 }

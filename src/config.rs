@@ -62,6 +62,7 @@ fn default_true() -> bool {
     true
 }
 
+/// Expand a path string, replacing `~` with the user's home directory.
 pub(crate) fn expand_path(path: &str) -> PathBuf {
     let expanded = shellexpand::tilde(path);
     PathBuf::from(expanded.as_ref())

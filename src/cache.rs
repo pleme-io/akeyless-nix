@@ -12,6 +12,7 @@ pub struct FsCache {
 }
 
 impl FsCache {
+    /// Create a new `FsCache` using the cache directory from the given config.
     pub fn new(config: &Config) -> Self {
         Self {
             cache_dir: config.cache_dir(),

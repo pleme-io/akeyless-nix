@@ -39,20 +39,6 @@ mod tests {
         }
     }
 
-    fn make_spec(akeyless_path: &str, file_path: &str) -> SecretSpec {
-        SecretSpec {
-            akeyless_path: akeyless_path.into(),
-            file_path: file_path.into(),
-            mode: "0400".into(),
-            owner: String::new(),
-            group: String::new(),
-            uid: None,
-            gid: None,
-            restart_units: vec![],
-            reload_units: vec![],
-        }
-    }
-
     #[tokio::test]
     async fn test_fetch_all_with_mock() {
         let mut mock_secrets = BTreeMap::new();
@@ -62,7 +48,10 @@ mod tests {
         let provider = MockProvider {
             secrets: mock_secrets,
         };
-        let specs = vec![make_spec("/a", "/tmp/a"), make_spec("/b", "/tmp/b")];
+        let specs = vec![
+            SecretSpec::for_test("/a", "/tmp/a"),
+            SecretSpec::for_test("/b", "/tmp/b"),
+        ];
 
         let result = fetch_all(&provider, &specs).await.unwrap();
         assert_eq!(result.len(), 2);
@@ -75,7 +64,7 @@ mod tests {
         let provider = MockProvider {
             secrets: BTreeMap::new(),
         };
-        let specs = vec![make_spec("/missing", "/tmp/m")];
+        let specs = vec![SecretSpec::for_test("/missing", "/tmp/m")];
 
         let result = fetch_all(&provider, &specs).await;
         assert!(result.is_err());
@@ -99,8 +88,8 @@ mod tests {
             secrets: mock_secrets,
         };
         let specs = vec![
-            make_spec("/exists", "/tmp/e"),
-            make_spec("/missing", "/tmp/m"),
+            SecretSpec::for_test("/exists", "/tmp/e"),
+            SecretSpec::for_test("/missing", "/tmp/m"),
         ];
 
         // Should fail because /missing is not in the mock

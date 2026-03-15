@@ -11,6 +11,7 @@ pub struct AkeylessClient {
 }
 
 impl AkeylessClient {
+    /// Create a new client with the given API URL and pre-authenticated token.
     pub fn new(api_url: &str, token: &str) -> Self {
         Self {
             http: reqwest::Client::new(),

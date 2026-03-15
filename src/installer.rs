@@ -169,17 +169,10 @@ mod tests {
 
     fn test_manifest(dir: &std::path::Path) -> Manifest {
         Manifest {
-            secrets: vec![SecretSpec {
-                akeyless_path: "/test/secret".into(),
-                file_path: dir.join("secret-file").to_string_lossy().to_string(),
-                mode: "0600".into(),
-                owner: String::new(),
-                group: String::new(),
-                uid: None,
-                gid: None,
-                restart_units: vec![],
-                reload_units: vec![],
-            }],
+            secrets: vec![SecretSpec::for_test(
+                "/test/secret",
+                &dir.join("secret-file").to_string_lossy(),
+            )],
             templates: vec![],
             generations_dir: dir.join("generations").to_string_lossy().to_string(),
             symlink_path: dir.join("current").to_string_lossy().to_string(),
@@ -229,27 +222,15 @@ mod tests {
         let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
 
         let manifest = Manifest {
-            secrets: vec![SecretSpec {
-                akeyless_path: "/db/password".into(),
-                file_path: dir.join("db-pass").to_string_lossy().to_string(),
-                mode: "0600".into(),
-                owner: String::new(),
-                group: String::new(),
-                uid: None,
-                gid: None,
-                restart_units: vec![],
-                reload_units: vec![],
-            }],
-            templates: vec![TemplateSpec {
-                name: "db-config".into(),
-                content: format!("connection: postgresql://user:{placeholder}@host/db"),
-                file_path: dir.join("db-config").to_string_lossy().to_string(),
-                mode: "0600".into(),
-                owner: String::new(),
-                group: String::new(),
-                uid: None,
-                gid: None,
-            }],
+            secrets: vec![SecretSpec::for_test(
+                "/db/password",
+                &dir.join("db-pass").to_string_lossy(),
+            )],
+            templates: vec![TemplateSpec::for_test(
+                "db-config",
+                &format!("connection: postgresql://user:{placeholder}@host/db"),
+                &dir.join("db-config").to_string_lossy(),
+            )],
             generations_dir: dir.join("generations").to_string_lossy().to_string(),
             symlink_path: dir.join("current").to_string_lossy().to_string(),
             keep_generations: 2,
@@ -319,28 +300,8 @@ mod tests {
 
         let manifest = Manifest {
             secrets: vec![
-                SecretSpec {
-                    akeyless_path: "/exists".into(),
-                    file_path: "/tmp/e".into(),
-                    mode: "0400".into(),
-                    owner: String::new(),
-                    group: String::new(),
-                    uid: None,
-                    gid: None,
-                    restart_units: vec![],
-                    reload_units: vec![],
-                },
-                SecretSpec {
-                    akeyless_path: "/missing".into(),
-                    file_path: "/tmp/m".into(),
-                    mode: "0400".into(),
-                    owner: String::new(),
-                    group: String::new(),
-                    uid: None,
-                    gid: None,
-                    restart_units: vec![],
-                    reload_units: vec![],
-                },
+                SecretSpec::for_test("/exists", "/tmp/e"),
+                SecretSpec::for_test("/missing", "/tmp/m"),
             ],
             templates: vec![],
             generations_dir: "/tmp/g".into(),
@@ -352,5 +313,90 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results[0].1);  // /exists → true
         assert!(!results[1].1); // /missing → false
+    }
+
+    #[tokio::test]
+    async fn test_install_secrets_and_templates_with_cache() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-full-combo");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/app/db-pass".into(), "pg-secret".into());
+        secrets.insert("/app/api-key".into(), "key-42".into());
+
+        let hash = sha256_hex("/app/api-key");
+        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec::for_test("/app/db-pass", &dir.join("db-pass").to_string_lossy()),
+                SecretSpec::for_test("/app/api-key", &dir.join("api-key").to_string_lossy()),
+            ],
+            templates: vec![TemplateSpec::for_test(
+                "app-env",
+                &format!("DB_PASS=inline\nAPI_KEY={placeholder}\n"),
+                &dir.join("app-env").to_string_lossy(),
+            )],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let provider = MockProvider { secrets };
+        let cache = MockCache::empty();
+        let installer = Installer::new(&provider, Some(&cache));
+
+        let result = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(result.secrets_count, 2);
+        assert_eq!(result.templates_count, 1);
+
+        // Verify secret files
+        assert_eq!(
+            std::fs::read_to_string(dir.join("db-pass")).unwrap(),
+            "pg-secret"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("api-key")).unwrap(),
+            "key-42"
+        );
+
+        // Verify template rendering
+        let env_content = std::fs::read_to_string(dir.join("app-env")).unwrap();
+        assert!(env_content.contains("API_KEY=key-42"));
+        assert!(!env_content.contains("AKEYLESS"));
+
+        // Verify cache was populated with both secrets
+        let cached = cache.load().unwrap().unwrap();
+        assert_eq!(cached.len(), 2);
+        assert_eq!(cached["/app/db-pass"], "pg-secret");
+        assert_eq!(cached["/app/api-key"], "key-42");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_empty_manifest() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-empty");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let installer = Installer::new(&provider, None);
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let result = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(result.secrets_count, 0);
+        assert_eq!(result.templates_count, 0);
+        assert_eq!(result.generation_number, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

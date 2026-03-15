@@ -149,7 +149,9 @@ fn resolve_gid(group: &str) -> Result<i32> {
     Ok(unsafe { (*gr).gr_gid } as i32)
 }
 
-/// Concrete file-system backed `FileWriter` implementation.
+/// Concrete file-system backed [`FileWriter`] implementation.
+///
+/// All operations are real filesystem calls (mkdir, unlink, symlink).
 pub struct FsFileWriter;
 
 impl FileWriter for FsFileWriter {

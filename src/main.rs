@@ -188,39 +188,17 @@ mod integration_tests {
 
         let manifest = Manifest {
             secrets: vec![
-                SecretSpec {
-                    akeyless_path: "/pleme/db-password".into(),
-                    file_path: secret_target.to_string_lossy().to_string(),
-                    mode: "0600".into(),
-                    owner: String::new(),
-                    group: String::new(),
-                    uid: None,
-                    gid: None,
-                    restart_units: vec![],
-                    reload_units: vec![],
-                },
-                SecretSpec {
-                    akeyless_path: "/pleme/api-token".into(),
-                    file_path: dir.join("secrets").join("api-token").to_string_lossy().to_string(),
-                    mode: "0400".into(),
-                    owner: String::new(),
-                    group: String::new(),
-                    uid: None,
-                    gid: None,
-                    restart_units: vec![],
-                    reload_units: vec![],
-                },
+                SecretSpec::for_test("/pleme/db-password", &secret_target.to_string_lossy()),
+                SecretSpec::for_test(
+                    "/pleme/api-token",
+                    &dir.join("secrets").join("api-token").to_string_lossy(),
+                ),
             ],
-            templates: vec![TemplateSpec {
-                name: "app-config.yaml".into(),
-                content: format!("database:\n  password: unused\napi:\n  token: {placeholder}\n"),
-                file_path: tmpl_target.to_string_lossy().to_string(),
-                mode: "0600".into(),
-                owner: String::new(),
-                group: String::new(),
-                uid: None,
-                gid: None,
-            }],
+            templates: vec![TemplateSpec::for_test(
+                "app-config.yaml",
+                &format!("database:\n  password: unused\napi:\n  token: {placeholder}\n"),
+                &tmpl_target.to_string_lossy(),
+            )],
             generations_dir: dir.join("generations").to_string_lossy().to_string(),
             symlink_path: dir.join("current").to_string_lossy().to_string(),
             keep_generations: 2,
@@ -288,17 +266,7 @@ mod integration_tests {
         let provider = MockProvider {
             secrets: BTreeMap::new(),
         };
-        let specs = vec![SecretSpec {
-            akeyless_path: "/does/not/exist".into(),
-            file_path: "/tmp/irrelevant".into(),
-            mode: "0400".into(),
-            owner: String::new(),
-            group: String::new(),
-            uid: None,
-            gid: None,
-            restart_units: vec![],
-            reload_units: vec![],
-        }];
+        let specs = vec![SecretSpec::for_test("/does/not/exist", "/tmp/irrelevant")];
 
         let result = fetch::fetch_all(&provider, &specs).await;
         assert!(result.is_err());

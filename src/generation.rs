@@ -8,8 +8,11 @@ use crate::template::RenderedTemplate;
 use crate::traits::FileWriter;
 use crate::write::{self, Ownership};
 
+/// A created generation, with its sequence number and filesystem path.
 pub struct Generation {
+    /// Monotonically increasing generation number.
     pub number: u64,
+    /// Absolute path to the generation directory.
     pub path: PathBuf,
 }
 
@@ -267,17 +270,10 @@ mod tests {
 
         let secret_target = dir.join("targets").join("db-password");
         let manifest = Manifest {
-            secrets: vec![SecretSpec {
-                akeyless_path: "/pleme/prod/db-password".into(),
-                file_path: secret_target.to_string_lossy().to_string(),
-                mode: "0600".into(),
-                owner: String::new(),
-                group: String::new(),
-                uid: None,
-                gid: None,
-                restart_units: vec![],
-                reload_units: vec![],
-            }],
+            secrets: vec![SecretSpec::for_test(
+                "/pleme/prod/db-password",
+                &secret_target.to_string_lossy(),
+            )],
             templates: vec![],
             generations_dir: dir.join("generations").to_string_lossy().to_string(),
             symlink_path: dir.join("current").to_string_lossy().to_string(),
@@ -307,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_full_flow_with_templates() {
-        use crate::manifest::SecretSpec;
+        use crate::manifest::{SecretSpec, TemplateSpec};
         use crate::template::RenderedTemplate;
         use crate::write::FsFileWriter;
 
@@ -319,27 +315,15 @@ mod tests {
         let tmpl_target = dir.join("targets").join("config.yaml");
 
         let manifest = Manifest {
-            secrets: vec![SecretSpec {
-                akeyless_path: "/app/token".into(),
-                file_path: secret_target.to_string_lossy().to_string(),
-                mode: "0400".into(),
-                owner: String::new(),
-                group: String::new(),
-                uid: None,
-                gid: None,
-                restart_units: vec![],
-                reload_units: vec![],
-            }],
-            templates: vec![crate::manifest::TemplateSpec {
-                name: "config.yaml".into(),
-                content: "token: PLACEHOLDER".into(),
-                file_path: tmpl_target.to_string_lossy().to_string(),
-                mode: "0600".into(),
-                owner: String::new(),
-                group: String::new(),
-                uid: None,
-                gid: None,
-            }],
+            secrets: vec![SecretSpec::for_test(
+                "/app/token",
+                &secret_target.to_string_lossy(),
+            )],
+            templates: vec![TemplateSpec::for_test(
+                "config.yaml",
+                "token: PLACEHOLDER",
+                &tmpl_target.to_string_lossy(),
+            )],
             generations_dir: dir.join("generations").to_string_lossy().to_string(),
             symlink_path: dir.join("current").to_string_lossy().to_string(),
             keep_generations: 2,
@@ -450,16 +434,16 @@ mod tests {
         let rendered: Vec<RenderedTemplate> = vec![];
 
         // 0 secrets and 0 templates should still create a generation
-        let gen = create(&manifest, &secrets, &rendered, true).unwrap();
-        assert_eq!(gen.number, 1);
-        assert!(gen.path.exists());
+        let generation = create(&manifest, &secrets, &rendered, true).unwrap();
+        assert_eq!(generation.number, 1);
+        assert!(generation.path.exists());
 
-        switch(&manifest, &gen, &rendered).unwrap();
+        switch(&manifest, &generation, &rendered).unwrap();
 
         // Main symlink should point to the generation
         let current = dir.join("current");
         assert!(current.is_symlink());
-        assert_eq!(std::fs::read_link(&current).unwrap(), gen.path);
+        assert_eq!(std::fs::read_link(&current).unwrap(), generation.path);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

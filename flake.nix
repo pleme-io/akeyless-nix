@@ -44,5 +44,6 @@
     // {
       homeManagerModules.default = import ./module;
       darwinModules.default = import ./module/darwin.nix;
+      nixosModules.default = import ./module/nixos.nix;
     };
 }
