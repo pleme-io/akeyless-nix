@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
+use igata::traits::TemplateRenderer;
 
 use crate::manifest::TemplateSpec;
+use crate::traits::TemplateEngine;
 
 /// Rendered template with its content and target path.
 pub struct RenderedTemplate {
@@ -16,35 +18,20 @@ pub struct RenderedTemplate {
     pub gid: Option<u32>,
 }
 
-/// Render all templates by substituting placeholders with secret values.
-///
-/// Placeholders are in the format `<AKEYLESS:{sha256_of_path}:PLACEHOLDER>`.
-/// The secret map is keyed by akeyless_path.
+/// Render all templates using the provided engine.
 pub fn render_all(
+    engine: &dyn TemplateEngine,
     templates: &[TemplateSpec],
     secrets: &BTreeMap<String, String>,
 ) -> Result<Vec<RenderedTemplate>> {
     let mut result = Vec::new();
 
-    // Build placeholder → value map
-    let placeholder_map: BTreeMap<String, &str> = secrets
-        .iter()
-        .map(|(path, value)| {
-            let hash = sha256_hex(path);
-            let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
-            (placeholder, value.as_str())
-        })
-        .collect();
-
     for tmpl in templates {
-        let mut rendered = tmpl.content.clone();
-        for (placeholder, value) in &placeholder_map {
-            rendered = rendered.replace(placeholder, value);
-        }
+        let rendered_content = engine.render(&tmpl.content, secrets)?;
 
         result.push(RenderedTemplate {
             name: tmpl.name.clone(),
-            content: rendered,
+            content: rendered_content,
             file_path: tmpl.file_path.clone(),
             mode: tmpl.mode.clone(),
             owner: tmpl.owner.clone(),
@@ -57,12 +44,91 @@ pub fn render_all(
     Ok(result)
 }
 
-/// Simple SHA-256 hex digest for placeholder generation.
+// ── Placeholder-based engine (legacy, backward compatible) ─────────────
+
+/// Legacy template engine using `<AKEYLESS:{hash}:PLACEHOLDER>` tokens.
+///
+/// This is the original approach: the Nix module generates placeholder
+/// tokens (SHA-256 hash of the akeyless path) which are substituted
+/// at activation time.
+pub struct PlaceholderEngine;
+
+impl TemplateEngine for PlaceholderEngine {
+    fn render(&self, template: &str, secrets: &BTreeMap<String, String>) -> Result<String> {
+        let mut result = template.to_string();
+        for (path, value) in secrets {
+            let hash = sha256_hex(path);
+            let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+            result = result.replace(&placeholder, value);
+        }
+        Ok(result)
+    }
+}
+
+// ── Igata-based engine (MiniJinja, `[= var =]` syntax) ────────────────
+
+/// MiniJinja-backed template engine using igata.
+///
+/// Template variables are derived from akeyless paths by sanitizing:
+/// `/pleme/github/token` → `pleme_github_token`
+///
+/// Templates use igata's default Nix-safe syntax:
+/// ```text
+/// token = [= pleme_github_token =]
+/// [% if pleme_enable_tls == "true" %]tls = on[% endif %]
+/// ```
+pub struct IgataEngine {
+    renderer: igata::MiniJinjaRenderer,
+}
+
+impl IgataEngine {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            renderer: igata::MiniJinjaRenderer::default(),
+        }
+    }
+
+    /// Create with custom syntax.
+    pub fn with_syntax(syntax: igata::Syntax) -> Result<Self> {
+        Ok(Self {
+            renderer: igata::MiniJinjaRenderer::new(syntax),
+        })
+    }
+}
+
+impl Default for IgataEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TemplateEngine for IgataEngine {
+    fn render(&self, template: &str, secrets: &BTreeMap<String, String>) -> Result<String> {
+        let variables: BTreeMap<String, String> = secrets
+            .iter()
+            .map(|(path, value)| (sanitize_var_name(path), value.clone()))
+            .collect();
+        self.renderer
+            .render(template, &variables)
+            .map_err(|e| anyhow::anyhow!("igata template error: {e}"))
+    }
+}
+
+/// Sanitize an akeyless path to a valid template variable name.
+///
+/// `/pleme/github/token` → `pleme_github_token`
+/// `/pleme/prod/db-password` → `pleme_prod_db_password`
+pub fn sanitize_var_name(path: &str) -> String {
+    path.trim_start_matches('/')
+        .replace('/', "_")
+        .replace('-', "_")
+}
+
+/// Simple deterministic hash for placeholder generation.
 pub(crate) fn sha256_hex(input: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    // Use a deterministic hasher for placeholder generation
-    // (doesn't need to be cryptographic — just unique per path)
     let mut hasher = DefaultHasher::new();
     input.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
@@ -72,145 +138,223 @@ pub(crate) fn sha256_hex(input: &str) -> String {
 mod tests {
     use super::*;
 
+    // ── PlaceholderEngine tests ────────────────────────────────────────
+
     #[test]
-    fn test_render_replaces_placeholders() {
+    fn placeholder_replaces_tokens() {
+        let engine = PlaceholderEngine;
         let mut secrets = BTreeMap::new();
         secrets.insert("/pleme/token".to_string(), "my-secret-token".to_string());
 
         let hash = sha256_hex("/pleme/token");
-        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+        let content = format!("token: <AKEYLESS:{hash}:PLACEHOLDER>");
 
-        let templates = vec![TemplateSpec {
-            name: "config".to_string(),
-            content: format!("token: {placeholder}"),
-            file_path: "/tmp/config".to_string(),
-            mode: "0600".to_string(),
-            owner: String::new(),
-            group: String::new(),
-            uid: None,
-            gid: None,
-        }];
-
-        let rendered = render_all(&templates, &secrets).unwrap();
-        assert_eq!(rendered.len(), 1);
-        assert_eq!(rendered[0].content, "token: my-secret-token");
+        let result = engine.render(&content, &secrets).unwrap();
+        assert_eq!(result, "token: my-secret-token");
     }
 
     #[test]
-    fn test_render_no_placeholders_passthrough() {
-        let secrets = BTreeMap::new();
-        let templates = vec![TemplateSpec {
-            name: "static-config".to_string(),
-            content: "host: localhost\nport: 5432\n".to_string(),
-            file_path: "/tmp/static".to_string(),
-            mode: "0644".to_string(),
-            owner: String::new(),
-            group: String::new(),
-            uid: None,
-            gid: None,
-        }];
-
-        let rendered = render_all(&templates, &secrets).unwrap();
-        assert_eq!(rendered.len(), 1);
-        assert_eq!(rendered[0].content, "host: localhost\nport: 5432\n");
-        assert_eq!(rendered[0].file_path, "/tmp/static");
-        assert_eq!(rendered[0].mode, "0644");
+    fn placeholder_passthrough() {
+        let engine = PlaceholderEngine;
+        let result = engine.render("plain text", &BTreeMap::new()).unwrap();
+        assert_eq!(result, "plain text");
     }
 
     #[test]
-    fn test_render_multiple_placeholders() {
+    fn placeholder_multiple() {
+        let engine = PlaceholderEngine;
         let mut secrets = BTreeMap::new();
         secrets.insert("/a".to_string(), "val-a".to_string());
         secrets.insert("/b".to_string(), "val-b".to_string());
 
         let ha = sha256_hex("/a");
         let hb = sha256_hex("/b");
+        let content = format!("a=<AKEYLESS:{ha}:PLACEHOLDER> b=<AKEYLESS:{hb}:PLACEHOLDER>");
 
-        let templates = vec![TemplateSpec {
-            name: "multi".to_string(),
-            content: format!("a=<AKEYLESS:{ha}:PLACEHOLDER> b=<AKEYLESS:{hb}:PLACEHOLDER>"),
-            file_path: "/tmp/multi".to_string(),
-            mode: "0600".to_string(),
-            owner: String::new(),
-            group: String::new(),
-            uid: None,
-            gid: None,
-        }];
-
-        let rendered = render_all(&templates, &secrets).unwrap();
-        assert_eq!(rendered[0].content, "a=val-a b=val-b");
+        let result = engine.render(&content, &secrets).unwrap();
+        assert_eq!(result, "a=val-a b=val-b");
     }
 
     #[test]
-    fn test_render_secret_with_newlines() {
+    fn placeholder_special_chars() {
+        let engine = PlaceholderEngine;
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/db/conn".to_string(), "p@ss$w0rd!&<>\"'\\".to_string());
+
+        let hash = sha256_hex("/db/conn");
+        let content = format!("password: <AKEYLESS:{hash}:PLACEHOLDER>");
+
+        let result = engine.render(&content, &secrets).unwrap();
+        assert_eq!(result, "password: p@ss$w0rd!&<>\"'\\");
+    }
+
+    #[test]
+    fn placeholder_newlines_in_value() {
+        let engine = PlaceholderEngine;
         let mut secrets = BTreeMap::new();
         secrets.insert(
             "/cert/tls".to_string(),
-            "-----BEGIN CERTIFICATE-----\nMIIBxTCCAW...\n-----END CERTIFICATE-----\n".to_string(),
+            "-----BEGIN CERTIFICATE-----\nMIIBxTCCAW\n-----END CERTIFICATE-----\n".to_string(),
         );
 
         let hash = sha256_hex("/cert/tls");
-        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+        let content = format!("cert: <AKEYLESS:{hash}:PLACEHOLDER>");
 
-        let templates = vec![TemplateSpec {
-            name: "tls-config".to_string(),
-            content: format!("cert: |\n  {placeholder}"),
-            file_path: "/tmp/tls".to_string(),
-            mode: "0600".to_string(),
-            owner: String::new(),
-            group: String::new(),
-            uid: None,
-            gid: None,
-        }];
-
-        let rendered = render_all(&templates, &secrets).unwrap();
-        assert!(rendered[0].content.contains("BEGIN CERTIFICATE"));
-        assert!(rendered[0].content.contains("END CERTIFICATE"));
-        assert!(!rendered[0].content.contains("AKEYLESS"));
+        let result = engine.render(&content, &secrets).unwrap();
+        assert!(result.contains("BEGIN CERTIFICATE"));
+        assert!(!result.contains("AKEYLESS"));
     }
 
     #[test]
-    fn test_render_secret_with_special_chars() {
-        let mut secrets = BTreeMap::new();
-        secrets.insert(
-            "/db/conn".to_string(),
-            "p@ss$w0rd!&<>\"'\\".to_string(),
-        );
-
-        let hash = sha256_hex("/db/conn");
-        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
-
-        let templates = vec![TemplateSpec {
-            name: "db-config".to_string(),
-            content: format!("password: {placeholder}"),
-            file_path: "/tmp/db".to_string(),
-            mode: "0600".to_string(),
-            owner: String::new(),
-            group: String::new(),
-            uid: None,
-            gid: None,
-        }];
-
-        let rendered = render_all(&templates, &secrets).unwrap();
-        assert_eq!(rendered[0].content, "password: p@ss$w0rd!&<>\"'\\");
-    }
-
-    #[test]
-    fn test_render_empty_templates() {
-        let mut secrets = BTreeMap::new();
-        secrets.insert("/a".to_string(), "val-a".to_string());
-
-        let rendered = render_all(&[], &secrets).unwrap();
-        assert!(rendered.is_empty());
-    }
-
-    #[test]
-    fn test_sha256_hex_deterministic() {
+    fn sha256_hex_deterministic() {
         let h1 = sha256_hex("/pleme/token");
         let h2 = sha256_hex("/pleme/token");
         assert_eq!(h1, h2);
+        assert_ne!(h1, sha256_hex("/pleme/other"));
+    }
 
-        let h3 = sha256_hex("/pleme/other");
-        assert_ne!(h1, h3);
+    // ── IgataEngine tests ──────────────────────────────────────────────
+
+    #[test]
+    fn igata_renders_variables() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/pleme/github/token".to_string(), "ghp_abc123".to_string());
+
+        let result = engine
+            .render("token = [= pleme_github_token =]", &secrets)
+            .unwrap();
+        assert_eq!(result, "token = ghp_abc123");
+    }
+
+    #[test]
+    fn igata_renders_multiple() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/pleme/db/pass".to_string(), "secret".to_string());
+        secrets.insert("/pleme/db/host".to_string(), "db.example.com".to_string());
+
+        let result = engine
+            .render("host=[= pleme_db_host =] pass=[= pleme_db_pass =]", &secrets)
+            .unwrap();
+        assert_eq!(result, "host=db.example.com pass=secret");
+    }
+
+    #[test]
+    fn igata_conditional() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/tls/enabled".to_string(), "true".to_string());
+        secrets.insert("/tls/cert".to_string(), "/etc/ssl/cert.pem".to_string());
+
+        let template = "[% if tls_enabled == \"true\" %]cert = [= tls_cert =]\n[% endif %]";
+        let result = engine.render(template, &secrets).unwrap();
+        assert!(result.contains("cert = /etc/ssl/cert.pem"));
+    }
+
+    #[test]
+    fn igata_passthrough_no_vars() {
+        let engine = IgataEngine::new();
+        let result = engine.render("static content", &BTreeMap::new()).unwrap();
+        assert_eq!(result, "static content");
+    }
+
+    #[test]
+    fn igata_nix_dollar_brace_not_interpreted() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/val".to_string(), "ok".to_string());
+
+        let result = engine
+            .render("nix=${foo} igata=[= val =]", &secrets)
+            .unwrap();
+        assert_eq!(result, "nix=${foo} igata=ok");
+    }
+
+    // ── sanitize_var_name tests ────────────────────────────────────────
+
+    #[test]
+    fn sanitize_simple_path() {
+        assert_eq!(sanitize_var_name("/pleme/github/token"), "pleme_github_token");
+    }
+
+    #[test]
+    fn sanitize_dashes() {
+        assert_eq!(
+            sanitize_var_name("/pleme/prod/db-password"),
+            "pleme_prod_db_password"
+        );
+    }
+
+    #[test]
+    fn sanitize_no_leading_slash() {
+        assert_eq!(sanitize_var_name("simple"), "simple");
+    }
+
+    // ── render_all tests ───────────────────────────────────────────────
+
+    #[test]
+    fn render_all_with_placeholder_engine() {
+        let engine = PlaceholderEngine;
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/pleme/token".to_string(), "secret123".to_string());
+
+        let hash = sha256_hex("/pleme/token");
+        let templates = vec![TemplateSpec::for_test(
+            "config",
+            &format!("token: <AKEYLESS:{hash}:PLACEHOLDER>"),
+            "/tmp/config",
+        )];
+
+        let rendered = render_all(&engine, &templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(rendered[0].content, "token: secret123");
+        assert_eq!(rendered[0].name, "config");
+    }
+
+    #[test]
+    fn render_all_with_igata_engine() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/pleme/token".to_string(), "secret123".to_string());
+
+        let templates = vec![TemplateSpec::for_test(
+            "config",
+            "token: [= pleme_token =]",
+            "/tmp/config",
+        )];
+
+        let rendered = render_all(&engine, &templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(rendered[0].content, "token: secret123");
+    }
+
+    #[test]
+    fn render_all_empty() {
+        let engine = PlaceholderEngine;
+        let secrets = BTreeMap::new();
+        let rendered = render_all(&engine, &[], &secrets).unwrap();
+        assert!(rendered.is_empty());
+    }
+
+    // ── Mock engine test ───────────────────────────────────────────────
+
+    #[test]
+    fn mock_engine_for_testing() {
+        /// A test-only engine that wraps values in markers.
+        struct MockEngine;
+        impl TemplateEngine for MockEngine {
+            fn render(
+                &self,
+                template: &str,
+                _secrets: &BTreeMap<String, String>,
+            ) -> Result<String> {
+                Ok(format!("<<MOCK>>{template}<</MOCK>>"))
+            }
+        }
+
+        let engine = MockEngine;
+        let result = engine.render("hello", &BTreeMap::new()).unwrap();
+        assert_eq!(result, "<<MOCK>>hello<</MOCK>>");
     }
 }

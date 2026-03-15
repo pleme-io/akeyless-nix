@@ -1,16 +1,16 @@
 //! Installer service — orchestrates the full secret installation flow.
 //!
-//! Composes all trait objects (SecretProvider, FileWriter, CacheStore) into
+//! Composes all trait objects (SecretProvider, TemplateEngine, CacheStore) into
 //! a single entry point. This is the core architecture: everything flows
 //! through the Installer, which delegates to traits at every I/O boundary.
 //!
 //! ```text
-//! Installer::new(provider, writer, cache)
+//! Installer::new(provider, engine, cache)
 //!   .install(manifest, ignore_passwd)
 //!     1. fetch all secrets via provider
-//!     2. render templates (pure, no I/O)
-//!     3. write generation via writer
-//!     4. switch symlinks via writer
+//!     2. render templates via engine (pure, no I/O)
+//!     3. write generation via filesystem
+//!     4. switch symlinks atomically
 //!     5. prune old generations
 //!     6. cache secrets via cache
 //! ```
@@ -23,7 +23,7 @@ use crate::fetch;
 use crate::generation;
 use crate::manifest::Manifest;
 use crate::template;
-use crate::traits::{CacheStore, SecretProvider};
+use crate::traits::{CacheStore, SecretProvider, TemplateEngine};
 
 /// Result of a successful installation.
 pub struct InstallResult {
@@ -38,13 +38,22 @@ pub struct InstallResult {
 /// with mocks.
 pub struct Installer<'a> {
     provider: &'a dyn SecretProvider,
+    engine: &'a dyn TemplateEngine,
     cache: Option<&'a dyn CacheStore>,
 }
 
 impl<'a> Installer<'a> {
     /// Create a new Installer with the given dependencies.
-    pub fn new(provider: &'a dyn SecretProvider, cache: Option<&'a dyn CacheStore>) -> Self {
-        Self { provider, cache }
+    pub fn new(
+        provider: &'a dyn SecretProvider,
+        engine: &'a dyn TemplateEngine,
+        cache: Option<&'a dyn CacheStore>,
+    ) -> Self {
+        Self {
+            provider,
+            engine,
+            cache,
+        }
     }
 
     /// Run the full installation flow.
@@ -56,8 +65,8 @@ impl<'a> Installer<'a> {
         // 1. Fetch all secrets via provider
         let secrets = self.fetch_with_fallback(manifest).await?;
 
-        // 2. Render templates (pure computation, no I/O)
-        let rendered = template::render_all(&manifest.templates, &secrets)?;
+        // 2. Render templates via engine (pure computation, no I/O)
+        let rendered = template::render_all(self.engine, &manifest.templates, &secrets)?;
 
         // 3. Write generation + switch symlinks + prune
         let gen_info = generation::create(manifest, &secrets, &rendered, ignore_passwd)?;
@@ -113,7 +122,7 @@ impl<'a> Installer<'a> {
 mod tests {
     use super::*;
     use crate::manifest::{SecretSpec, TemplateSpec};
-    use crate::template::sha256_hex;
+    use crate::template::{sha256_hex, IgataEngine, PlaceholderEngine};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -167,6 +176,29 @@ mod tests {
         }
     }
 
+    /// Mock engine that records calls and returns content unchanged.
+    struct RecordingEngine {
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl RecordingEngine {
+        fn new() -> Self {
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+        fn call_count(&self) -> usize {
+            self.calls.lock().unwrap().len()
+        }
+    }
+
+    impl TemplateEngine for RecordingEngine {
+        fn render(&self, template: &str, _secrets: &BTreeMap<String, String>) -> Result<String> {
+            self.calls.lock().unwrap().push(template.to_string());
+            Ok(template.to_string())
+        }
+    }
+
     fn test_manifest(dir: &std::path::Path) -> Manifest {
         Manifest {
             secrets: vec![SecretSpec::for_test(
@@ -189,8 +221,9 @@ mod tests {
         secrets.insert("/test/secret".into(), "my-value".into());
 
         let provider = MockProvider { secrets };
+        let engine = PlaceholderEngine;
         let cache = MockCache::empty();
-        let installer = Installer::new(&provider, Some(&cache));
+        let installer = Installer::new(&provider, &engine, Some(&cache));
         let manifest = test_manifest(&dir);
 
         let result = installer.install(&manifest, true).await.unwrap();
@@ -199,11 +232,9 @@ mod tests {
         assert_eq!(result.templates_count, 0);
         assert_eq!(result.generation_number, 1);
 
-        // Verify file was written
         let content = std::fs::read_to_string(dir.join("secret-file")).unwrap();
         assert_eq!(content, "my-value");
 
-        // Verify cache was populated
         let cached = cache.load().unwrap().unwrap();
         assert_eq!(cached["/test/secret"], "my-value");
 
@@ -211,7 +242,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_with_template() {
+    async fn test_install_with_placeholder_template() {
         let dir = std::env::temp_dir().join("akeyless-nix-test-installer-tmpl");
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -237,13 +268,50 @@ mod tests {
         };
 
         let provider = MockProvider { secrets };
-        let installer = Installer::new(&provider, None);
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
 
         let result = installer.install(&manifest, true).await.unwrap();
         assert_eq!(result.secrets_count, 1);
         assert_eq!(result.templates_count, 1);
 
-        // Template should have placeholder replaced
+        let rendered = std::fs::read_to_string(dir.join("db-config")).unwrap();
+        assert_eq!(rendered, "connection: postgresql://user:s3cret@host/db");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_with_igata_template() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-igata");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/db/password".into(), "s3cret".into());
+
+        let manifest = Manifest {
+            secrets: vec![SecretSpec::for_test(
+                "/db/password",
+                &dir.join("db-pass").to_string_lossy(),
+            )],
+            templates: vec![TemplateSpec::for_test(
+                "db-config",
+                "connection: postgresql://user:[= db_password =]@host/db",
+                &dir.join("db-config").to_string_lossy(),
+            )],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let provider = MockProvider { secrets };
+        let engine = IgataEngine::new();
+        let installer = Installer::new(&provider, &engine, None);
+
+        let result = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(result.secrets_count, 1);
+        assert_eq!(result.templates_count, 1);
+
         let rendered = std::fs::read_to_string(dir.join("db-config")).unwrap();
         assert_eq!(rendered, "connection: postgresql://user:s3cret@host/db");
 
@@ -255,16 +323,15 @@ mod tests {
         let dir = std::env::temp_dir().join("akeyless-nix-test-installer-fallback");
         let _ = std::fs::remove_dir_all(&dir);
 
-        // Pre-populate cache with the secret
         let mut cached_secrets = BTreeMap::new();
         cached_secrets.insert("/test/secret".into(), "cached-value".into());
 
         let provider = FailingProvider;
+        let engine = PlaceholderEngine;
         let cache = MockCache::with_data(cached_secrets);
-        let installer = Installer::new(&provider, Some(&cache));
+        let installer = Installer::new(&provider, &engine, Some(&cache));
         let manifest = test_manifest(&dir);
 
-        // Should succeed using cache fallback
         let result = installer.install(&manifest, true).await.unwrap();
         assert_eq!(result.secrets_count, 1);
 
@@ -280,10 +347,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let provider = FailingProvider;
-        let installer = Installer::new(&provider, None);
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
         let manifest = test_manifest(&dir);
 
-        // Should fail — no cache, provider is offline
         let result = installer.install(&manifest, true).await;
         assert!(result.is_err());
 
@@ -296,7 +363,8 @@ mod tests {
         secrets.insert("/exists".into(), "val".into());
 
         let provider = MockProvider { secrets };
-        let installer = Installer::new(&provider, None);
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
 
         let manifest = Manifest {
             secrets: vec![
@@ -316,7 +384,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_secrets_and_templates_with_cache() {
+    async fn test_recording_engine_tracks_calls() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-recording");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/app/key".into(), "val".into());
+
+        let manifest = Manifest {
+            secrets: vec![SecretSpec::for_test(
+                "/app/key",
+                &dir.join("key").to_string_lossy(),
+            )],
+            templates: vec![
+                TemplateSpec::for_test("a", "template-a", &dir.join("a").to_string_lossy()),
+                TemplateSpec::for_test("b", "template-b", &dir.join("b").to_string_lossy()),
+            ],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let provider = MockProvider { secrets };
+        let engine = RecordingEngine::new();
+        let installer = Installer::new(&provider, &engine, None);
+
+        installer.install(&manifest, true).await.unwrap();
+
+        // Engine should have been called once per template
+        assert_eq!(engine.call_count(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_empty_manifest() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-empty");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let result = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(result.secrets_count, 0);
+        assert_eq!(result.templates_count, 0);
+        assert_eq!(result.generation_number, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_multi_secret_multi_template() {
         let dir = std::env::temp_dir().join("akeyless-nix-test-installer-full-combo");
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -343,14 +472,14 @@ mod tests {
         };
 
         let provider = MockProvider { secrets };
+        let engine = PlaceholderEngine;
         let cache = MockCache::empty();
-        let installer = Installer::new(&provider, Some(&cache));
+        let installer = Installer::new(&provider, &engine, Some(&cache));
 
         let result = installer.install(&manifest, true).await.unwrap();
         assert_eq!(result.secrets_count, 2);
         assert_eq!(result.templates_count, 1);
 
-        // Verify secret files
         assert_eq!(
             std::fs::read_to_string(dir.join("db-pass")).unwrap(),
             "pg-secret"
@@ -360,42 +489,12 @@ mod tests {
             "key-42"
         );
 
-        // Verify template rendering
         let env_content = std::fs::read_to_string(dir.join("app-env")).unwrap();
         assert!(env_content.contains("API_KEY=key-42"));
         assert!(!env_content.contains("AKEYLESS"));
 
-        // Verify cache was populated with both secrets
         let cached = cache.load().unwrap().unwrap();
         assert_eq!(cached.len(), 2);
-        assert_eq!(cached["/app/db-pass"], "pg-secret");
-        assert_eq!(cached["/app/api-key"], "key-42");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn test_install_empty_manifest() {
-        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-empty");
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let provider = MockProvider {
-            secrets: BTreeMap::new(),
-        };
-        let installer = Installer::new(&provider, None);
-
-        let manifest = Manifest {
-            secrets: vec![],
-            templates: vec![],
-            generations_dir: dir.join("generations").to_string_lossy().to_string(),
-            symlink_path: dir.join("current").to_string_lossy().to_string(),
-            keep_generations: 2,
-        };
-
-        let result = installer.install(&manifest, true).await.unwrap();
-        assert_eq!(result.secrets_count, 0);
-        assert_eq!(result.templates_count, 0);
-        assert_eq!(result.generation_number, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

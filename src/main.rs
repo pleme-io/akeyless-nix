@@ -71,7 +71,8 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
-            let inst = installer::Installer::new(&client, cache_ref);
+            let engine = template::PlaceholderEngine;
+            let inst = installer::Installer::new(&client, &engine, cache_ref);
             let result = inst.install(&manifest, ignore_passwd).await?;
 
             eprintln!(
@@ -88,7 +89,8 @@ async fn main() -> anyhow::Result<()> {
 
             eprintln!("akeyless-nix: auth OK (token acquired)");
 
-            let inst = installer::Installer::new(&client, None);
+            let engine = template::PlaceholderEngine;
+            let inst = installer::Installer::new(&client, &engine, None);
             let results = inst.check(&manifest).await?;
 
             for (path, ok) in &results {
@@ -209,7 +211,8 @@ mod integration_tests {
         assert_eq!(secrets.len(), 2);
 
         // Step 2: Render templates
-        let rendered = template::render_all(&manifest.templates, &secrets).unwrap();
+        let engine = template::PlaceholderEngine;
+        let rendered = template::render_all(&engine, &manifest.templates, &secrets).unwrap();
         assert_eq!(rendered.len(), 1);
         assert!(rendered[0].content.contains("tok-123"));
 

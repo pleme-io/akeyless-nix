@@ -35,3 +35,16 @@ pub trait CacheStore: Send + Sync {
     /// Load secrets from cache storage, returning None if no cache exists.
     fn load(&self) -> Result<Option<BTreeMap<String, String>>>;
 }
+
+/// Trait abstracting template rendering.
+///
+/// Decouples the rendering strategy from the installer. Implementations:
+/// - `PlaceholderEngine`: hash-based `<AKEYLESS:hash:PLACEHOLDER>` substitution (legacy)
+/// - `IgataEngine`: MiniJinja-backed rendering with `[= var =]` syntax (via igata)
+///
+/// The `secrets` map is keyed by akeyless_path (e.g., `/pleme/github/token`).
+/// Each implementation decides how to map these paths to template variables.
+pub trait TemplateEngine: Send + Sync {
+    /// Render a template string, substituting secret values.
+    fn render(&self, template_content: &str, secrets: &BTreeMap<String, String>) -> Result<String>;
+}
