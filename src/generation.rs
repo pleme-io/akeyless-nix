@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::manifest::Manifest;
 use crate::template::RenderedTemplate;
+use crate::traits::FileWriter;
 use crate::write::{self, Ownership};
 
 pub struct Generation {
@@ -19,14 +20,32 @@ pub fn create(
     templates: &[RenderedTemplate],
     ignore_passwd: bool,
 ) -> Result<Generation> {
+    create_with_writer(
+        manifest,
+        secrets,
+        templates,
+        ignore_passwd,
+        &crate::write::FsFileWriter,
+    )
+}
+
+/// Create a new generation directory using the provided `FileWriter`.
+pub fn create_with_writer(
+    manifest: &Manifest,
+    secrets: &BTreeMap<String, String>,
+    templates: &[RenderedTemplate],
+    ignore_passwd: bool,
+    writer: &dyn FileWriter,
+) -> Result<Generation> {
     let gd = Path::new(&manifest.generations_dir);
-    std::fs::create_dir_all(gd)
+    writer
+        .create_dir_all(gd)
         .with_context(|| format!("creating generations dir {}", gd.display()))?;
 
     // Find next generation number
     let number = next_generation(gd)?;
     let gp = gd.join(number.to_string());
-    std::fs::create_dir_all(&gp)?;
+    writer.create_dir_all(&gp)?;
 
     // Write secrets
     for spec in &manifest.secrets {
@@ -50,7 +69,7 @@ pub fn create(
 
     // Write rendered templates
     let tmpl_dir = gp.join("rendered");
-    std::fs::create_dir_all(&tmpl_dir)?;
+    writer.create_dir_all(&tmpl_dir)?;
     for tmpl in templates {
         let target = tmpl_dir.join(&tmpl.name);
         let ownership = Ownership {
@@ -76,21 +95,31 @@ pub fn create(
 
 /// Atomically switch the symlink to point to the new generation.
 pub fn switch(manifest: &Manifest, genr: &Generation) -> Result<()> {
+    switch_with_writer(manifest, genr, &crate::write::FsFileWriter)
+}
+
+/// Switch using the provided `FileWriter`.
+pub fn switch_with_writer(
+    manifest: &Manifest,
+    genr: &Generation,
+    writer: &dyn FileWriter,
+) -> Result<()> {
     let symlink = Path::new(&manifest.symlink_path);
 
-    // Create symlinks from declared file_path → generation file
+    // Create symlinks from declared file_path -> generation file
     for spec in &manifest.secrets {
         let gf = genr.path.join(sanitize_name(&spec.akeyless_path));
         let target = Path::new(&spec.file_path);
 
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
+            writer.create_dir_all(parent)?;
         }
 
         // Remove old symlink/file if it exists
-        let _ = std::fs::remove_file(target);
-        std::os::unix::fs::symlink(&gf, target)
-            .with_context(|| format!("symlinking {} → {}", target.display(), gf.display()))?;
+        writer.remove_file(target)?;
+        writer
+            .symlink(&gf, target)
+            .with_context(|| format!("symlinking {} -> {}", target.display(), gf.display()))?;
     }
 
     // Same for templates
@@ -99,20 +128,22 @@ pub fn switch(manifest: &Manifest, genr: &Generation) -> Result<()> {
         let target = Path::new(&tmpl.file_path);
 
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
+            writer.create_dir_all(parent)?;
         }
 
-        let _ = std::fs::remove_file(target);
-        std::os::unix::fs::symlink(&gf, target)
-            .with_context(|| format!("symlinking {} → {}", target.display(), gf.display()))?;
+        writer.remove_file(target)?;
+        writer
+            .symlink(&gf, target)
+            .with_context(|| format!("symlinking {} -> {}", target.display(), gf.display()))?;
     }
 
     // Update the main symlink
     if let Some(parent) = symlink.parent() {
-        std::fs::create_dir_all(parent)?;
+        writer.create_dir_all(parent)?;
     }
-    let _ = std::fs::remove_file(symlink);
-    std::os::unix::fs::symlink(&genr.path, symlink)
+    writer.remove_file(symlink)?;
+    writer
+        .symlink(&genr.path, symlink)
         .with_context(|| format!("switching generation symlink to {}", genr.path.display()))?;
 
     Ok(())
@@ -155,7 +186,7 @@ fn next_generation(gd: &Path) -> Result<u64> {
 }
 
 /// Convert an Akeyless path to a safe filename.
-/// "/pleme/prod/db-password" → "pleme-prod-db-password"
+/// "/pleme/prod/db-password" -> "pleme-prod-db-password"
 fn sanitize_name(path: &str) -> String {
     path.trim_start_matches('/')
         .replace('/', "-")
@@ -212,6 +243,129 @@ mod tests {
         assert!(remaining.contains(&2));
         assert!(remaining.contains(&3));
         assert!(!remaining.contains(&1));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_generation_with_fs_file_writer() {
+        use crate::manifest::SecretSpec;
+        use crate::write::FsFileWriter;
+
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-writer");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let secret_target = dir.join("targets").join("db-password");
+        let manifest = Manifest {
+            secrets: vec![SecretSpec {
+                akeyless_path: "/pleme/prod/db-password".into(),
+                file_path: secret_target.to_string_lossy().to_string(),
+                mode: "0600".into(),
+                owner: String::new(),
+                group: String::new(),
+                uid: None,
+                gid: None,
+                restart_units: vec![],
+                reload_units: vec![],
+            }],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/pleme/prod/db-password".into(), "s3cret".into());
+
+        let writer = FsFileWriter;
+        let generation = create_with_writer(&manifest, &secrets, &[], true, &writer).unwrap();
+        assert_eq!(generation.number, 1);
+
+        // Verify file was written in generation dir
+        let gen_file = generation.path.join("pleme-prod-db-password");
+        assert_eq!(std::fs::read_to_string(&gen_file).unwrap(), "s3cret");
+
+        // Switch symlinks
+        switch_with_writer(&manifest, &generation, &writer).unwrap();
+
+        // Verify symlink was created to target
+        assert!(secret_target.is_symlink());
+        assert_eq!(std::fs::read_to_string(&secret_target).unwrap(), "s3cret");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_full_flow_with_templates() {
+        use crate::manifest::SecretSpec;
+        use crate::template::RenderedTemplate;
+        use crate::write::FsFileWriter;
+
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-full");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let secret_target = dir.join("targets").join("token");
+        let tmpl_target = dir.join("targets").join("config.yaml");
+
+        let manifest = Manifest {
+            secrets: vec![SecretSpec {
+                akeyless_path: "/app/token".into(),
+                file_path: secret_target.to_string_lossy().to_string(),
+                mode: "0400".into(),
+                owner: String::new(),
+                group: String::new(),
+                uid: None,
+                gid: None,
+                restart_units: vec![],
+                reload_units: vec![],
+            }],
+            templates: vec![crate::manifest::TemplateSpec {
+                name: "config.yaml".into(),
+                content: "token: PLACEHOLDER".into(),
+                file_path: tmpl_target.to_string_lossy().to_string(),
+                mode: "0600".into(),
+                owner: String::new(),
+                group: String::new(),
+                uid: None,
+                gid: None,
+            }],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/app/token".into(), "my-token".into());
+
+        let rendered = vec![RenderedTemplate {
+            name: "config.yaml".into(),
+            content: "token: my-token".into(),
+            file_path: tmpl_target.to_string_lossy().to_string(),
+            mode: "0600".into(),
+            owner: String::new(),
+            group: String::new(),
+            uid: None,
+            gid: None,
+        }];
+
+        let writer = FsFileWriter;
+        let generation = create_with_writer(&manifest, &secrets, &rendered, true, &writer).unwrap();
+        switch_with_writer(&manifest, &generation, &writer).unwrap();
+
+        // Verify secret symlink
+        assert!(secret_target.is_symlink());
+        assert_eq!(std::fs::read_to_string(&secret_target).unwrap(), "my-token");
+
+        // Verify template symlink
+        assert!(tmpl_target.is_symlink());
+        assert_eq!(std::fs::read_to_string(&tmpl_target).unwrap(), "token: my-token");
+
+        // Verify generation symlink
+        let current = dir.join("current");
+        assert!(current.is_symlink());
+        assert_eq!(std::fs::read_link(&current).unwrap(), generation.path);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

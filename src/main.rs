@@ -7,13 +7,12 @@ mod client;
 mod config;
 mod fetch;
 mod generation;
+mod installer;
 mod manifest;
 mod platform;
 mod template;
 mod traits;
 mod write;
-
-use traits::SecretProvider;
 
 #[derive(Parser)]
 #[command(
@@ -64,24 +63,20 @@ async fn main() -> anyhow::Result<()> {
             let manifest = manifest::load(&manifest)?;
             let token = auth::authenticate(&cfg).await?;
             let client = client::AkeylessClient::new(&cfg.api_url, &token);
+            let fs_cache = cache::FsCache::new(&cfg);
 
-            let provider: &dyn SecretProvider = &client;
-            let secrets = fetch::fetch_all(provider, &manifest.secrets).await?;
-            let rendered = template::render_all(&manifest.templates, &secrets)?;
+            let cache_ref: Option<&dyn traits::CacheStore> = if cfg.cache.enabled {
+                Some(&fs_cache)
+            } else {
+                None
+            };
 
-            let generation_info = generation::create(&manifest, &secrets, &rendered, ignore_passwd)?;
-            generation::switch(&manifest, &generation_info)?;
-            generation::prune(&manifest)?;
-
-            if cfg.cache.enabled {
-                cache::store(&cfg, &secrets)?;
-            }
+            let inst = installer::Installer::new(&client, cache_ref);
+            let result = inst.install(&manifest, ignore_passwd).await?;
 
             eprintln!(
                 "akeyless-nix: installed {} secrets, {} templates (generation {})",
-                secrets.len(),
-                rendered.len(),
-                generation_info.number
+                result.secrets_count, result.templates_count, result.generation_number
             );
         }
 
@@ -92,18 +87,20 @@ async fn main() -> anyhow::Result<()> {
             let client = client::AkeylessClient::new(&cfg.api_url, &token);
 
             eprintln!("akeyless-nix: auth OK (token acquired)");
-            eprintln!("akeyless-nix: manifest has {} secrets, {} templates",
-                manifest.secrets.len(), manifest.templates.len());
 
-            let provider: &dyn SecretProvider = &client;
+            let inst = installer::Installer::new(&client, None);
+            let results = inst.check(&manifest).await?;
 
-            // Dry-run fetch to verify all paths exist
-            for secret in &manifest.secrets {
-                match provider.get_secret(&secret.akeyless_path).await {
-                    Ok(_) => eprintln!("  [ok] {}", secret.akeyless_path),
-                    Err(e) => eprintln!("  [!!] {} — {e}", secret.akeyless_path),
+            for (path, ok) in &results {
+                if *ok {
+                    eprintln!("  [ok] {path}");
+                } else {
+                    eprintln!("  [!!] {path}");
                 }
             }
+
+            let ok_count = results.iter().filter(|(_, ok)| *ok).count();
+            eprintln!("akeyless-nix: {ok_count}/{} secrets accessible", results.len());
         }
 
         Commands::Validate { manifest } => {
@@ -114,4 +111,201 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// End-to-end integration tests that exercise the full install flow
+/// using mock providers and a temporary filesystem.
+#[cfg(test)]
+mod integration_tests {
+    use std::collections::BTreeMap;
+
+    use async_trait::async_trait;
+
+    use crate::fetch;
+    use crate::generation;
+    use crate::manifest::{Manifest, SecretSpec, TemplateSpec};
+    use crate::template;
+    use crate::traits::{CacheStore, SecretProvider};
+    use crate::write::FsFileWriter;
+
+    struct MockProvider {
+        secrets: BTreeMap<String, String>,
+    }
+
+    #[async_trait]
+    impl SecretProvider for MockProvider {
+        async fn authenticate(&self) -> anyhow::Result<String> {
+            Ok("mock-token".into())
+        }
+        async fn get_secret(&self, path: &str) -> anyhow::Result<String> {
+            self.secrets
+                .get(path)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("not found: {path}"))
+        }
+    }
+
+    struct InMemoryCache {
+        data: std::sync::Mutex<Option<BTreeMap<String, String>>>,
+    }
+
+    impl InMemoryCache {
+        fn new() -> Self {
+            Self {
+                data: std::sync::Mutex::new(None),
+            }
+        }
+    }
+
+    impl CacheStore for InMemoryCache {
+        fn store(&self, secrets: &BTreeMap<String, String>) -> anyhow::Result<()> {
+            *self.data.lock().unwrap() = Some(secrets.clone());
+            Ok(())
+        }
+        fn load(&self) -> anyhow::Result<Option<BTreeMap<String, String>>> {
+            Ok(self.data.lock().unwrap().clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_full_install_flow() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-e2e");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Set up mock secrets
+        let mut mock_secrets = BTreeMap::new();
+        mock_secrets.insert("/pleme/db-password".into(), "p@ssw0rd".into());
+        mock_secrets.insert("/pleme/api-token".into(), "tok-123".into());
+
+        let provider = MockProvider {
+            secrets: mock_secrets,
+        };
+
+        // Build the template placeholder
+        let hash = template::sha256_hex("/pleme/api-token");
+        let placeholder = format!("<AKEYLESS:{hash}:PLACEHOLDER>");
+
+        let secret_target = dir.join("secrets").join("db-password");
+        let tmpl_target = dir.join("secrets").join("app-config.yaml");
+
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec {
+                    akeyless_path: "/pleme/db-password".into(),
+                    file_path: secret_target.to_string_lossy().to_string(),
+                    mode: "0600".into(),
+                    owner: String::new(),
+                    group: String::new(),
+                    uid: None,
+                    gid: None,
+                    restart_units: vec![],
+                    reload_units: vec![],
+                },
+                SecretSpec {
+                    akeyless_path: "/pleme/api-token".into(),
+                    file_path: dir.join("secrets").join("api-token").to_string_lossy().to_string(),
+                    mode: "0400".into(),
+                    owner: String::new(),
+                    group: String::new(),
+                    uid: None,
+                    gid: None,
+                    restart_units: vec![],
+                    reload_units: vec![],
+                },
+            ],
+            templates: vec![TemplateSpec {
+                name: "app-config.yaml".into(),
+                content: format!("database:\n  password: unused\napi:\n  token: {placeholder}\n"),
+                file_path: tmpl_target.to_string_lossy().to_string(),
+                mode: "0600".into(),
+                owner: String::new(),
+                group: String::new(),
+                uid: None,
+                gid: None,
+            }],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        // Step 1: Fetch via mock provider
+        let secrets = fetch::fetch_all(&provider, &manifest.secrets).await.unwrap();
+        assert_eq!(secrets.len(), 2);
+
+        // Step 2: Render templates
+        let rendered = template::render_all(&manifest.templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 1);
+        assert!(rendered[0].content.contains("tok-123"));
+
+        // Step 3: Create generation via FsFileWriter
+        let writer = FsFileWriter;
+        let generation_info =
+            generation::create_with_writer(&manifest, &secrets, &rendered, true, &writer).unwrap();
+        assert_eq!(generation_info.number, 1);
+
+        // Step 4: Switch symlinks
+        generation::switch_with_writer(&manifest, &generation_info, &writer).unwrap();
+
+        // Step 5: Verify symlinks work
+        assert!(secret_target.is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(&secret_target).unwrap(),
+            "p@ssw0rd"
+        );
+        assert!(tmpl_target.is_symlink());
+        let rendered_config = std::fs::read_to_string(&tmpl_target).unwrap();
+        assert!(rendered_config.contains("token: tok-123"));
+
+        // Step 6: Cache via in-memory store
+        let cache = InMemoryCache::new();
+        cache.store(&secrets).unwrap();
+        let cached = cache.load().unwrap().unwrap();
+        assert_eq!(cached["/pleme/db-password"], "p@ssw0rd");
+
+        // Step 7: Create a second generation and prune
+        let g2 = generation::create_with_writer(&manifest, &secrets, &rendered, true, &writer)
+            .unwrap();
+        assert_eq!(g2.number, 2);
+        let g3 = generation::create_with_writer(&manifest, &secrets, &rendered, true, &writer)
+            .unwrap();
+        assert_eq!(g3.number, 3);
+
+        generation::prune(&manifest).unwrap();
+
+        // Only 2 generations should remain (keep_generations = 2)
+        let mut remaining: Vec<u64> = std::fs::read_dir(dir.join("generations"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining, vec![2, 3]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_flow_with_fetch_failure() {
+        // Verify that a missing secret causes the entire flow to fail early
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let specs = vec![SecretSpec {
+            akeyless_path: "/does/not/exist".into(),
+            file_path: "/tmp/irrelevant".into(),
+            mode: "0400".into(),
+            owner: String::new(),
+            group: String::new(),
+            uid: None,
+            gid: None,
+            restart_units: vec![],
+            reload_units: vec![],
+        }];
+
+        let result = fetch::fetch_all(&provider, &specs).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("not found"), "error should mention 'not found': {err_msg}");
+    }
 }
