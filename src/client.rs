@@ -51,10 +51,6 @@ impl AkeylessClient {
 
 #[async_trait]
 impl SecretProvider for AkeylessClient {
-    async fn authenticate(&self) -> Result<String> {
-        Ok(self.token.clone())
-    }
-
     async fn get_secret(&self, path: &str) -> Result<String> {
         self.fetch_secret_value(path).await
     }

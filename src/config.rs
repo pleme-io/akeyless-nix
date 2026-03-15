@@ -25,7 +25,11 @@ pub struct CacheConfig {
     pub enabled: bool,
     #[serde(default = "default_cache_dir")]
     pub dir: String,
+    /// Cache time-to-live in seconds. Cached secrets older than this are
+    /// considered stale during fallback. Reserved for future TTL-based
+    /// cache expiry implementation.
     #[serde(default = "default_ttl")]
+    #[allow(dead_code)]
     pub ttl_seconds: u64,
 }
 
@@ -128,5 +132,52 @@ mod tests {
     fn test_expand_path() {
         let path = expand_path("~/test");
         assert!(!path.to_string_lossy().contains('~'));
+    }
+
+    #[test]
+    fn test_load_from_yaml_file() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-config-yaml");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let yaml_content = r#"
+auth:
+  access_id_file: /tmp/test-access-id
+  access_key_file: /tmp/test-access-key
+api_url: https://custom-api.example.com
+cache:
+  enabled: false
+  dir: /tmp/test-cache
+  ttl_seconds: 7200
+"#;
+        let yaml_path = dir.join("test-config.yaml");
+        std::fs::write(&yaml_path, yaml_content).unwrap();
+
+        let content = std::fs::read_to_string(&yaml_path).unwrap();
+        let config: Config = serde_yaml::from_str(&content).unwrap();
+
+        assert_eq!(config.auth.access_id_file, "/tmp/test-access-id");
+        assert_eq!(config.auth.access_key_file, "/tmp/test-access-key");
+        assert_eq!(config.api_url, "https://custom-api.example.com");
+        assert!(!config.cache.enabled);
+        assert_eq!(config.cache.dir, "/tmp/test-cache");
+        assert_eq!(config.cache.ttl_seconds, 7200);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_yaml_with_defaults() {
+        // Minimal YAML — all optional fields should use defaults
+        let yaml_content = r#"
+auth: {}
+"#;
+        let config: Config = serde_yaml::from_str(yaml_content).unwrap();
+
+        assert_eq!(config.auth.access_id_file, "~/.config/akeyless/access-id");
+        assert_eq!(config.auth.access_key_file, "~/.config/akeyless/access-key");
+        assert_eq!(config.api_url, "https://api.akeyless.io");
+        assert!(config.cache.enabled);
+        assert_eq!(config.cache.ttl_seconds, 3600);
     }
 }

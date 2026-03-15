@@ -6,19 +6,6 @@ use anyhow::{Context, Result};
 use crate::config::Config;
 use crate::traits::CacheStore;
 
-/// Store fetched secrets in local cache for offline fallback.
-pub fn store(config: &Config, secrets: &BTreeMap<String, String>) -> Result<()> {
-    let cache = FsCache::new(config);
-    cache.store(secrets)
-}
-
-/// Load secrets from local cache (for offline fallback).
-#[allow(dead_code)]
-pub fn load(config: &Config) -> Result<Option<BTreeMap<String, String>>> {
-    let cache = FsCache::new(config);
-    cache.load()
-}
-
 /// File-system backed cache store.
 pub struct FsCache {
     cache_dir: PathBuf,

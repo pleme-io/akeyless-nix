@@ -134,9 +134,6 @@ mod integration_tests {
 
     #[async_trait]
     impl SecretProvider for MockProvider {
-        async fn authenticate(&self) -> anyhow::Result<String> {
-            Ok("mock-token".into())
-        }
         async fn get_secret(&self, path: &str) -> anyhow::Result<String> {
             self.secrets
                 .get(path)
@@ -245,7 +242,7 @@ mod integration_tests {
         assert_eq!(generation_info.number, 1);
 
         // Step 4: Switch symlinks
-        generation::switch_with_writer(&manifest, &generation_info, &writer).unwrap();
+        generation::switch_with_writer(&manifest, &generation_info, &rendered, &writer).unwrap();
 
         // Step 5: Verify symlinks work
         assert!(secret_target.is_symlink());

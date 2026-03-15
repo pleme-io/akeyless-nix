@@ -94,14 +94,23 @@ pub fn create_with_writer(
 }
 
 /// Atomically switch the symlink to point to the new generation.
-pub fn switch(manifest: &Manifest, genr: &Generation) -> Result<()> {
-    switch_with_writer(manifest, genr, &crate::write::FsFileWriter)
+pub fn switch(
+    manifest: &Manifest,
+    genr: &Generation,
+    rendered_templates: &[RenderedTemplate],
+) -> Result<()> {
+    switch_with_writer(manifest, genr, rendered_templates, &crate::write::FsFileWriter)
 }
 
 /// Switch using the provided `FileWriter`.
+///
+/// Creates symlinks from each secret's declared `file_path` to the corresponding
+/// file in the generation directory, and from each rendered template's `file_path`
+/// to the rendered output.
 pub fn switch_with_writer(
     manifest: &Manifest,
     genr: &Generation,
+    rendered_templates: &[RenderedTemplate],
     writer: &dyn FileWriter,
 ) -> Result<()> {
     let symlink = Path::new(&manifest.symlink_path);
@@ -122,8 +131,8 @@ pub fn switch_with_writer(
             .with_context(|| format!("symlinking {} -> {}", target.display(), gf.display()))?;
     }
 
-    // Same for templates
-    for tmpl in &manifest.templates {
+    // Create symlinks for rendered templates using file_path from RenderedTemplate
+    for tmpl in rendered_templates {
         let gf = genr.path.join("rendered").join(&tmpl.name);
         let target = Path::new(&tmpl.file_path);
 
@@ -286,8 +295,8 @@ mod tests {
         let gen_file = generation.path.join("pleme-prod-db-password");
         assert_eq!(std::fs::read_to_string(&gen_file).unwrap(), "s3cret");
 
-        // Switch symlinks
-        switch_with_writer(&manifest, &generation, &writer).unwrap();
+        // Switch symlinks (no templates in this test)
+        switch_with_writer(&manifest, &generation, &[], &writer).unwrap();
 
         // Verify symlink was created to target
         assert!(secret_target.is_symlink());
@@ -352,7 +361,7 @@ mod tests {
 
         let writer = FsFileWriter;
         let generation = create_with_writer(&manifest, &secrets, &rendered, true, &writer).unwrap();
-        switch_with_writer(&manifest, &generation, &writer).unwrap();
+        switch_with_writer(&manifest, &generation, &rendered, &writer).unwrap();
 
         // Verify secret symlink
         assert!(secret_target.is_symlink());
@@ -366,6 +375,91 @@ mod tests {
         let current = dir.join("current");
         assert!(current.is_symlink());
         assert_eq!(std::fs::read_link(&current).unwrap(), generation.path);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_prune_fewer_than_keep() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-prune-few");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 5,
+        };
+
+        // Create only 2 generations, keep_generations = 5
+        let secrets = BTreeMap::new();
+        let templates = vec![];
+
+        let g1 = create(&manifest, &secrets, &templates, true).unwrap();
+        assert_eq!(g1.number, 1);
+        let g2 = create(&manifest, &secrets, &templates, true).unwrap();
+        assert_eq!(g2.number, 2);
+
+        // Prune should not remove anything (2 < 5)
+        prune(&manifest).unwrap();
+
+        let remaining: Vec<u64> = std::fs::read_dir(dir.join("generations"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+            .collect();
+        assert_eq!(remaining.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_prune_nonexistent_dir() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-prune-nodir");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        // Prune on nonexistent dir should succeed (no-op)
+        prune(&manifest).unwrap();
+    }
+
+    #[test]
+    fn test_empty_manifest() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-empty-manifest");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let secrets = BTreeMap::new();
+        let rendered: Vec<RenderedTemplate> = vec![];
+
+        // 0 secrets and 0 templates should still create a generation
+        let gen = create(&manifest, &secrets, &rendered, true).unwrap();
+        assert_eq!(gen.number, 1);
+        assert!(gen.path.exists());
+
+        switch(&manifest, &gen, &rendered).unwrap();
+
+        // Main symlink should point to the generation
+        let current = dir.join("current");
+        assert!(current.is_symlink());
+        assert_eq!(std::fs::read_link(&current).unwrap(), gen.path);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

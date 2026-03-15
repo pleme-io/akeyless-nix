@@ -39,11 +39,17 @@ pub struct SecretSpec {
     /// File group GID (alternative to group name)
     #[serde(default)]
     pub gid: Option<u32>,
-    /// Systemd units to restart when this secret changes (NixOS only)
+    /// Systemd units to restart when this secret changes (NixOS only).
+    /// Parsed from the manifest for completeness but acted upon by
+    /// the NixOS activation script, not by the Rust binary.
     #[serde(default)]
+    #[allow(dead_code)]
     pub restart_units: Vec<String>,
-    /// Systemd units to reload when this secret changes (NixOS only)
+    /// Systemd units to reload when this secret changes (NixOS only).
+    /// Parsed from the manifest for completeness but acted upon by
+    /// the NixOS activation script, not by the Rust binary.
     #[serde(default)]
+    #[allow(dead_code)]
     pub reload_units: Vec<String>,
 }
 

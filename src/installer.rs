@@ -61,7 +61,7 @@ impl<'a> Installer<'a> {
 
         // 3. Write generation + switch symlinks + prune
         let gen_info = generation::create(manifest, &secrets, &rendered, ignore_passwd)?;
-        generation::switch(manifest, &gen_info)?;
+        generation::switch(manifest, &gen_info, &rendered)?;
         generation::prune(manifest)?;
 
         // 4. Cache secrets for offline fallback
@@ -123,9 +123,6 @@ mod tests {
 
     #[async_trait]
     impl SecretProvider for MockProvider {
-        async fn authenticate(&self) -> Result<String> {
-            Ok("mock-token".into())
-        }
         async fn get_secret(&self, path: &str) -> Result<String> {
             self.secrets
                 .get(path)
@@ -165,9 +162,6 @@ mod tests {
 
     #[async_trait]
     impl SecretProvider for FailingProvider {
-        async fn authenticate(&self) -> Result<String> {
-            anyhow::bail!("offline")
-        }
         async fn get_secret(&self, _path: &str) -> Result<String> {
             anyhow::bail!("API unreachable")
         }

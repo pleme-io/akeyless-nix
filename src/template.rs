@@ -97,6 +97,27 @@ mod tests {
     }
 
     #[test]
+    fn test_render_no_placeholders_passthrough() {
+        let secrets = BTreeMap::new();
+        let templates = vec![TemplateSpec {
+            name: "static-config".to_string(),
+            content: "host: localhost\nport: 5432\n".to_string(),
+            file_path: "/tmp/static".to_string(),
+            mode: "0644".to_string(),
+            owner: String::new(),
+            group: String::new(),
+            uid: None,
+            gid: None,
+        }];
+
+        let rendered = render_all(&templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(rendered[0].content, "host: localhost\nport: 5432\n");
+        assert_eq!(rendered[0].file_path, "/tmp/static");
+        assert_eq!(rendered[0].mode, "0644");
+    }
+
+    #[test]
     fn test_render_multiple_placeholders() {
         let mut secrets = BTreeMap::new();
         secrets.insert("/a".to_string(), "val-a".to_string());

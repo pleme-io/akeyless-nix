@@ -31,10 +31,6 @@ mod tests {
 
     #[async_trait]
     impl SecretProvider for MockProvider {
-        async fn authenticate(&self) -> anyhow::Result<String> {
-            Ok("mock-token".into())
-        }
-
         async fn get_secret(&self, path: &str) -> anyhow::Result<String> {
             self.secrets
                 .get(path)

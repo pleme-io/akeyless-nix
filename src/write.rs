@@ -21,9 +21,11 @@ pub struct Ownership {
 
 /// Write a secret value to a file with the specified permissions.
 ///
-/// When `ignore_passwd` is true, all owner/group operations (chown) are
-/// skipped. This is useful in CI, dry-run, or containerized contexts
-/// where /etc/passwd may not have the target users/groups.
+/// Convenience wrapper around [`write_secret_with_ownership`] with default
+/// (empty) ownership. When `ignore_passwd` is true, all owner/group operations
+/// (chown) are skipped. This is useful in CI, dry-run, or containerized
+/// contexts where /etc/passwd may not have the target users/groups.
+#[cfg(test)]
 pub fn write_secret(path: &Path, value: &str, mode: &str, ignore_passwd: bool) -> Result<()> {
     write_secret_with_ownership(path, value, mode, ignore_passwd, &Ownership::default())
 }
@@ -151,18 +153,6 @@ fn resolve_gid(group: &str) -> Result<i32> {
 pub struct FsFileWriter;
 
 impl FileWriter for FsFileWriter {
-    fn write_file(&self, path: &Path, content: &str, mode: u32) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating parent dirs for {}", path.display()))?;
-        }
-        std::fs::write(path, content)
-            .with_context(|| format!("writing {}", path.display()))?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-            .with_context(|| format!("setting permissions on {}", path.display()))?;
-        Ok(())
-    }
-
     fn create_dir_all(&self, path: &Path) -> Result<()> {
         std::fs::create_dir_all(path)
             .with_context(|| format!("creating directory {}", path.display()))
@@ -252,22 +242,6 @@ mod tests {
         // Empty owner/group with no uid/gid should skip chown entirely
         write_secret_with_ownership(&path, "value", "0600", false, &ownership).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "value");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_fs_file_writer_write_file() {
-        let dir = std::env::temp_dir().join("akeyless-nix-test-fswriter-write");
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let writer = FsFileWriter;
-        let path = dir.join("sub").join("secret.txt");
-        writer.write_file(&path, "hello-trait", 0o600).unwrap();
-
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello-trait");
-        let perms = std::fs::metadata(&path).unwrap().permissions();
-        assert_eq!(perms.mode() & 0o777, 0o600);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
