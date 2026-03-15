@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 mod auth;
@@ -25,6 +25,16 @@ struct Cli {
     command: Commands,
 }
 
+/// Which template engine to use for rendering.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum TemplateEngineKind {
+    /// Hash-based placeholder substitution (legacy, default)
+    #[default]
+    Placeholder,
+    /// MiniJinja-backed rendering via igata (`[= var =]` syntax)
+    Igata,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Fetch secrets and install them to their target paths
@@ -35,6 +45,10 @@ enum Commands {
         /// Ignore owner/group lookups (for dry activation)
         #[arg(long)]
         ignore_passwd: bool,
+
+        /// Template engine to use for rendering
+        #[arg(long, value_enum, default_value_t = TemplateEngineKind::Placeholder)]
+        template_engine: TemplateEngineKind,
     },
 
     /// Validate manifest and test authentication (dry run)
@@ -58,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Install {
             manifest,
             ignore_passwd,
+            template_engine,
         } => {
             let cfg = config::load()?;
             let manifest = manifest::load(&manifest)?;
@@ -71,8 +86,13 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
-            let engine = template::PlaceholderEngine;
-            let inst = installer::Installer::new(&client, &engine, cache_ref);
+            let placeholder_engine = template::PlaceholderEngine;
+            let igata_engine = template::IgataEngine::new();
+            let engine: &dyn traits::TemplateEngine = match template_engine {
+                TemplateEngineKind::Placeholder => &placeholder_engine,
+                TemplateEngineKind::Igata => &igata_engine,
+            };
+            let inst = installer::Installer::new(&client, engine, cache_ref);
             let result = inst.install(&manifest, ignore_passwd).await?;
 
             eprintln!(

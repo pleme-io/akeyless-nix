@@ -90,6 +90,7 @@ impl IgataEngine {
     }
 
     /// Create with custom syntax.
+    #[allow(dead_code)]
     pub fn with_syntax(syntax: igata::Syntax) -> Result<Self> {
         Ok(Self {
             renderer: igata::MiniJinjaRenderer::new(syntax),
@@ -289,6 +290,32 @@ mod tests {
     #[test]
     fn sanitize_no_leading_slash() {
         assert_eq!(sanitize_var_name("simple"), "simple");
+    }
+
+    #[test]
+    fn sanitize_double_slashes() {
+        // trim_start_matches removes all leading slashes
+        assert_eq!(sanitize_var_name("//pleme/token"), "pleme_token");
+    }
+
+    #[test]
+    fn sanitize_trailing_slash() {
+        assert_eq!(sanitize_var_name("/pleme/token/"), "pleme_token_");
+    }
+
+    #[test]
+    fn sanitize_dots_preserved() {
+        assert_eq!(sanitize_var_name("/app.prod/token"), "app.prod_token");
+    }
+
+    #[test]
+    fn sanitize_already_underscored() {
+        assert_eq!(sanitize_var_name("/api_key"), "api_key");
+    }
+
+    #[test]
+    fn sanitize_empty_string() {
+        assert_eq!(sanitize_var_name(""), "");
     }
 
     // ── render_all tests ───────────────────────────────────────────────
