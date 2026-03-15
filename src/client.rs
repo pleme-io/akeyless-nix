@@ -1,4 +1,7 @@
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
+
+use crate::traits::SecretProvider;
 
 /// Akeyless API client for fetching secret values.
 pub struct AkeylessClient {
@@ -16,8 +19,8 @@ impl AkeylessClient {
         }
     }
 
-    /// Fetch a single secret value by its Akeyless path.
-    pub async fn get_secret(&self, path: &str) -> Result<String> {
+    /// Fetch a single secret value by its Akeyless path (inherent method).
+    pub async fn fetch_secret_value(&self, path: &str) -> Result<String> {
         let resp = self
             .http
             .post(format!("{}/get-secret-value", self.api_url))
@@ -43,5 +46,16 @@ impl AkeylessClient {
             .as_str()
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow::anyhow!("secret {path} not found in response"))
+    }
+}
+
+#[async_trait]
+impl SecretProvider for AkeylessClient {
+    async fn authenticate(&self) -> Result<String> {
+        Ok(self.token.clone())
+    }
+
+    async fn get_secret(&self, path: &str) -> Result<String> {
+        self.fetch_secret_value(path).await
     }
 }

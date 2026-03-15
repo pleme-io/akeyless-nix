@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::manifest::Manifest;
 use crate::template::RenderedTemplate;
-use crate::write;
+use crate::write::{self, Ownership};
 
 pub struct Generation {
     pub number: u64,
@@ -32,7 +32,19 @@ pub fn create(
     for spec in &manifest.secrets {
         if let Some(value) = secrets.get(&spec.akeyless_path) {
             let target = gp.join(sanitize_name(&spec.akeyless_path));
-            write::write_secret(&target, value, &spec.mode, ignore_passwd)?;
+            let ownership = Ownership {
+                owner: spec.owner.clone(),
+                group: spec.group.clone(),
+                uid: spec.uid,
+                gid: spec.gid,
+            };
+            write::write_secret_with_ownership(
+                &target,
+                value,
+                &spec.mode,
+                ignore_passwd,
+                &ownership,
+            )?;
         }
     }
 
@@ -41,7 +53,19 @@ pub fn create(
     std::fs::create_dir_all(&tmpl_dir)?;
     for tmpl in templates {
         let target = tmpl_dir.join(&tmpl.name);
-        write::write_secret(&target, &tmpl.content, &tmpl.mode, ignore_passwd)?;
+        let ownership = Ownership {
+            owner: tmpl.owner.clone(),
+            group: tmpl.group.clone(),
+            uid: tmpl.uid,
+            gid: tmpl.gid,
+        };
+        write::write_secret_with_ownership(
+            &target,
+            &tmpl.content,
+            &tmpl.mode,
+            ignore_passwd,
+            &ownership,
+        )?;
     }
 
     Ok(Generation {

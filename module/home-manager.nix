@@ -24,6 +24,18 @@
 }: let
   cfg = config.akeyless;
 
+  # Resolve the effective path for a secret: explicit path or auto-generated default.
+  effectiveSecretPath = name: secret:
+    if secret.path != ""
+    then secret.path
+    else "${cfg.defaultSymlinkPath}/${lib.replaceStrings ["/"] ["-"] (lib.removePrefix "/" name)}";
+
+  # Resolve template content: inline content or read from file at eval time.
+  effectiveTemplateContent = tmpl:
+    if tmpl.file != null
+    then builtins.readFile tmpl.file
+    else tmpl.content;
+
   # Build the JSON manifest consumed by akeyless-install-secrets at activation time.
   # This is a derivation in the Nix store -- evaluated at build time, secrets fetched
   # at activation time.
@@ -31,26 +43,30 @@
     secrets =
       lib.mapAttrsToList (name: secret: {
         akeyless_path = name;
-        file_path = secret.path;
+        file_path = effectiveSecretPath name secret;
         mode = secret.mode;
         owner = secret.owner;
         group = secret.group;
+        uid = secret.uid;
+        gid = secret.gid;
       })
       cfg.secrets;
 
     templates =
       lib.mapAttrsToList (name: tmpl: {
         inherit name;
-        content = tmpl.content;
+        content = effectiveTemplateContent tmpl;
         file_path = tmpl.path;
         mode = tmpl.mode;
         owner = tmpl.owner;
         group = tmpl.group;
+        uid = tmpl.uid;
+        gid = tmpl.gid;
       })
       cfg.templates;
 
-    generations_dir = "${config.xdg.dataHome}/akeyless-nix/generations";
-    symlink_path = "${config.xdg.dataHome}/akeyless-nix/secrets";
+    generations_dir = cfg.defaultSecretsMountPoint;
+    symlink_path = cfg.defaultSymlinkPath;
     keep_generations = cfg.keepGenerations;
   });
 
@@ -58,7 +74,11 @@
     options = {
       path = lib.mkOption {
         type = lib.types.str;
-        description = "Local file path to write the secret value.";
+        default = "";
+        description = ''
+          Local file path to write the secret value.
+          If empty, defaults to {defaultSymlinkPath}/{sanitized-name}.
+        '';
       };
 
       mode = lib.mkOption {
@@ -78,6 +98,18 @@
         default = "";
         description = "File group (empty = current group).";
       };
+
+      uid = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = "File owner UID (alternative to owner name). Takes precedence over owner.";
+      };
+
+      gid = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = "File group GID (alternative to group name). Takes precedence over group.";
+      };
     };
   };
 
@@ -90,9 +122,21 @@
 
       content = lib.mkOption {
         type = lib.types.str;
+        default = "";
         description = ''
           Template content with placeholder substitution.
           Use config.akeyless.placeholder."<secret-path>" to reference secrets.
+          Mutually exclusive with `file` — if both are set, `file` takes precedence.
+        '';
+      };
+
+      file = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = ''
+          Template file (alternative to inline content).
+          The file is read at Nix evaluation time and its contents used as the template.
+          Takes precedence over `content` if both are set.
         '';
       };
 
@@ -113,6 +157,18 @@
         default = "";
         description = "File group (empty = current group).";
       };
+
+      uid = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = "File owner UID (alternative to owner name). Takes precedence over owner.";
+      };
+
+      gid = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = "File group GID (alternative to group name). Takes precedence over group.";
+      };
     };
   };
 in {
@@ -125,12 +181,25 @@ in {
       description = "The akeyless-install-secrets package to use.";
     };
 
+    defaultSecretsMountPoint = lib.mkOption {
+      type = lib.types.str;
+      default = "${config.xdg.dataHome}/akeyless-nix/generations";
+      description = "Directory for secret generations (where generation directories are created).";
+    };
+
+    defaultSymlinkPath = lib.mkOption {
+      type = lib.types.str;
+      default = "${config.xdg.dataHome}/akeyless-nix/secrets";
+      description = "Symlink path for current generation. Also used as the base for auto-generated secret paths.";
+    };
+
     secrets = lib.mkOption {
       type = lib.types.attrsOf secretSubmodule;
       default = {};
       description = ''
         Secrets to fetch from Akeyless. Keys are Akeyless paths
         (e.g., "/pleme/prod/db-password").
+        If `path` is not set, defaults to `''${defaultSymlinkPath}/{sanitized-name}`.
       '';
       example = lib.literalExpression ''
         {
@@ -148,6 +217,8 @@ in {
       description = ''
         Templates with secret placeholder substitution. Reference secrets
         via config.akeyless.placeholder."<secret-path>".
+        Template content can be specified inline via `content` or loaded from
+        a file via `file` (read at Nix evaluation time).
       '';
       example = lib.literalExpression ''
         {

@@ -13,6 +13,8 @@ mod template;
 mod traits;
 mod write;
 
+use traits::SecretProvider;
+
 #[derive(Parser)]
 #[command(
     name = "akeyless-install-secrets",
@@ -63,7 +65,8 @@ async fn main() -> anyhow::Result<()> {
             let token = auth::authenticate(&cfg).await?;
             let client = client::AkeylessClient::new(&cfg.api_url, &token);
 
-            let secrets = fetch::fetch_all(&client, &manifest.secrets).await?;
+            let provider: &dyn SecretProvider = &client;
+            let secrets = fetch::fetch_all(provider, &manifest.secrets).await?;
             let rendered = template::render_all(&manifest.templates, &secrets)?;
 
             let generation_info = generation::create(&manifest, &secrets, &rendered, ignore_passwd)?;
@@ -92,9 +95,11 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("akeyless-nix: manifest has {} secrets, {} templates",
                 manifest.secrets.len(), manifest.templates.len());
 
+            let provider: &dyn SecretProvider = &client;
+
             // Dry-run fetch to verify all paths exist
             for secret in &manifest.secrets {
-                match client.get_secret(&secret.akeyless_path).await {
+                match provider.get_secret(&secret.akeyless_path).await {
                     Ok(_) => eprintln!("  [ok] {}", secret.akeyless_path),
                     Err(e) => eprintln!("  [!!] {} — {e}", secret.akeyless_path),
                 }

@@ -12,6 +12,8 @@ pub struct RenderedTemplate {
     pub mode: String,
     pub owner: String,
     pub group: String,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
 }
 
 /// Render all templates by substituting placeholders with secret values.
@@ -47,6 +49,8 @@ pub fn render_all(
             mode: tmpl.mode.clone(),
             owner: tmpl.owner.clone(),
             group: tmpl.group.clone(),
+            uid: tmpl.uid,
+            gid: tmpl.gid,
         });
     }
 
@@ -83,6 +87,8 @@ mod tests {
             mode: "0600".to_string(),
             owner: String::new(),
             group: String::new(),
+            uid: None,
+            gid: None,
         }];
 
         let rendered = render_all(&templates, &secrets).unwrap();
@@ -106,6 +112,8 @@ mod tests {
             mode: "0600".to_string(),
             owner: String::new(),
             group: String::new(),
+            uid: None,
+            gid: None,
         }];
 
         let rendered = render_all(&templates, &secrets).unwrap();

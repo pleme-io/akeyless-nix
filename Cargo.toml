@@ -29,6 +29,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "6.0"
 shellexpand = "3.1"
 serde_yaml = "0.9"
+libc = "0.2"
 
 [lints.clippy]
 pedantic = "warn"

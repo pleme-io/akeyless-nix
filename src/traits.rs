@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -18,4 +19,12 @@ pub trait FileWriter: Send + Sync {
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn remove_file(&self, path: &Path) -> Result<()>;
     fn symlink(&self, src: &Path, dst: &Path) -> Result<()>;
+}
+
+/// Trait abstracting secret cache operations.
+pub trait CacheStore: Send + Sync {
+    /// Persist secrets to cache storage.
+    fn store(&self, secrets: &BTreeMap<String, String>) -> Result<()>;
+    /// Load secrets from cache storage, returning None if no cache exists.
+    fn load(&self) -> Result<Option<BTreeMap<String, String>>>;
 }

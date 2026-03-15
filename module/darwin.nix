@@ -19,31 +19,47 @@
   # The activation script copies the Nix store manifest here.
   stableManifestPath = "${config.xdg.dataHome}/akeyless-nix/manifest.json";
 
-  # Build the manifest (same as home-manager.nix -- shared via import)
+  # Resolve template content: inline content or read from file at eval time.
+  effectiveTemplateContent = tmpl:
+    if tmpl.file != null
+    then builtins.readFile tmpl.file
+    else tmpl.content;
+
+  # Resolve the effective path for a secret: explicit path or auto-generated default.
+  effectiveSecretPath = name: secret:
+    if secret.path != ""
+    then secret.path
+    else "${cfg.defaultSymlinkPath}/${lib.replaceStrings ["/"] ["-"] (lib.removePrefix "/" name)}";
+
+  # Build the manifest (same shape as home-manager.nix)
   manifestFile = pkgs.writeText "akeyless-manifest.json" (builtins.toJSON {
     secrets =
       lib.mapAttrsToList (name: secret: {
         akeyless_path = name;
-        file_path = secret.path;
+        file_path = effectiveSecretPath name secret;
         mode = secret.mode;
         owner = secret.owner;
         group = secret.group;
+        uid = secret.uid;
+        gid = secret.gid;
       })
       cfg.secrets;
 
     templates =
       lib.mapAttrsToList (name: tmpl: {
         inherit name;
-        content = tmpl.content;
+        content = effectiveTemplateContent tmpl;
         file_path = tmpl.path;
         mode = tmpl.mode;
         owner = tmpl.owner;
         group = tmpl.group;
+        uid = tmpl.uid;
+        gid = tmpl.gid;
       })
       cfg.templates;
 
-    generations_dir = "${config.xdg.dataHome}/akeyless-nix/generations";
-    symlink_path = "${config.xdg.dataHome}/akeyless-nix/secrets";
+    generations_dir = cfg.defaultSecretsMountPoint;
+    symlink_path = cfg.defaultSymlinkPath;
     keep_generations = cfg.keepGenerations;
   });
 

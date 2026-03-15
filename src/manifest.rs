@@ -33,6 +33,18 @@ pub struct SecretSpec {
     /// File group (group name or empty for current group)
     #[serde(default)]
     pub group: String,
+    /// File owner UID (alternative to owner name)
+    #[serde(default)]
+    pub uid: Option<u32>,
+    /// File group GID (alternative to group name)
+    #[serde(default)]
+    pub gid: Option<u32>,
+    /// Systemd units to restart when this secret changes (NixOS only)
+    #[serde(default)]
+    pub restart_units: Vec<String>,
+    /// Systemd units to reload when this secret changes (NixOS only)
+    #[serde(default)]
+    pub reload_units: Vec<String>,
 }
 
 fn default_mode() -> String {
@@ -56,6 +68,12 @@ pub struct TemplateSpec {
     /// File group
     #[serde(default)]
     pub group: String,
+    /// File owner UID (alternative to owner name)
+    #[serde(default)]
+    pub uid: Option<u32>,
+    /// File group GID (alternative to group name)
+    #[serde(default)]
+    pub gid: Option<u32>,
 }
 
 pub fn load(path: &Path) -> Result<Manifest> {
@@ -102,5 +120,81 @@ mod tests {
         let manifest: Manifest = serde_json::from_str(json).unwrap();
         assert_eq!(manifest.secrets[0].mode, "0400");
         assert_eq!(manifest.keep_generations, 2);
+    }
+
+    #[test]
+    fn test_uid_gid_parsing() {
+        let json = r#"{
+            "secrets": [
+                {
+                    "akeyless_path": "/test",
+                    "file_path": "/tmp/test",
+                    "uid": 1000,
+                    "gid": 100
+                }
+            ],
+            "templates": [
+                {
+                    "name": "tmpl",
+                    "content": "hello",
+                    "file_path": "/tmp/tmpl",
+                    "uid": 0,
+                    "gid": 0
+                }
+            ],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets[0].uid, Some(1000));
+        assert_eq!(manifest.secrets[0].gid, Some(100));
+        assert_eq!(manifest.templates[0].uid, Some(0));
+        assert_eq!(manifest.templates[0].gid, Some(0));
+    }
+
+    #[test]
+    fn test_uid_gid_defaults_to_none() {
+        let json = r#"{
+            "secrets": [{"akeyless_path": "/test", "file_path": "/tmp/test"}],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets[0].uid, None);
+        assert_eq!(manifest.secrets[0].gid, None);
+    }
+
+    #[test]
+    fn test_restart_reload_units_parsing() {
+        let json = r#"{
+            "secrets": [
+                {
+                    "akeyless_path": "/test",
+                    "file_path": "/tmp/test",
+                    "restart_units": ["nginx.service", "app.service"],
+                    "reload_units": ["haproxy.service"]
+                }
+            ],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets[0].restart_units, vec!["nginx.service", "app.service"]);
+        assert_eq!(manifest.secrets[0].reload_units, vec!["haproxy.service"]);
+    }
+
+    #[test]
+    fn test_restart_reload_units_default_empty() {
+        let json = r#"{
+            "secrets": [{"akeyless_path": "/test", "file_path": "/tmp/test"}],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.secrets[0].restart_units.is_empty());
+        assert!(manifest.secrets[0].reload_units.is_empty());
     }
 }
