@@ -2,45 +2,39 @@
 
 Drop-in replacement for `sops-nix` that fetches secrets from Akeyless instead of
 decrypting a git-committed SOPS file. Secrets are pulled via the Akeyless API at
-activation time and written to files with proper permissions — identical interface
+activation time and written to files with proper permissions -- identical interface
 to sops-nix for zero-migration-friction.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Nix Module                        │
-│  (home-manager / nix-darwin / NixOS)                │
-│                                                      │
-│  akeyless.secrets."/prod/db-password" = {           │
-│    path = "$HOME/.config/app/db-password";           │
-│    mode = "0600";                                    │
-│  };                                                  │
-│                                                      │
-│  akeyless.templates."kubeconfig" = {                │
-│    path = "$HOME/.kube/credentials";                 │
-│    content = "token: ${akeyless.placeholder...}";   │
-│  };                                                  │
-│                                                      │
-│  Generates: manifest.json (secret list + paths)     │
-│  Wires: activation script / launchd agent           │
-└───────────────────────┬─────────────────────────────┘
-                        │ nix rebuild / switch
+┌─────────────────────────────────────────────────────────────┐
+│                    Nix Module Layer                          │
+│  (home-manager / nix-darwin / NixOS)                        │
+│                                                              │
+│  Shared lib:  module/lib.nix  (submodules, manifest builder)│
+│  HM:          module/home-manager.nix  (activation script)  │
+│  Darwin:      module/darwin.nix  (+ launchd agent)          │
+│  NixOS:       module/nixos.nix  (+ systemd restart/reload)  │
+│                                                              │
+│  Generates: manifest.json  ->  Nix store derivation         │
+│  Wires: activation script / launchd agent / systemd units   │
+└───────────────────────┬─────────────────────────────────────┘
+                        │  nix rebuild / switch
                         ▼
-┌─────────────────────────────────────────────────────┐
-│             akeyless-install-secrets                  │
-│                 (Rust binary)                         │
-│                                                      │
-│  1. Read manifest.json                               │
-│  2. Load config (shikumi: ~/.config/akeyless-nix/)  │
-│  3. Authenticate to Akeyless API (todoku HTTP)       │
-│  4. Fetch each secret value                          │
-│  5. Write files with mode/owner/group                │
-│  6. Render templates (placeholder substitution)      │
-│  7. Atomic generation switch (symlink swap)          │
-│  8. Prune old generations                            │
-│  9. Report changes (for service restarts)            │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│             Installer (central orchestrator)                  │
+│                                                              │
+│  1. Load manifest.json (manifest.rs)                         │
+│  2. Load config ~/.config/akeyless-nix/ (config.rs)          │
+│  3. Authenticate to Akeyless API (auth.rs)                   │
+│  4. Fetch all secrets via SecretProvider trait (fetch.rs)     │
+│  5. Render templates -- pure, no I/O (template.rs)           │
+│  6. Write generation directory (generation.rs + write.rs)    │
+│  7. Switch symlinks atomically (generation.rs)               │
+│  8. Prune old generations (generation.rs)                    │
+│  9. Cache secrets for offline fallback (cache.rs)            │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Why Replace sops-nix?
@@ -51,15 +45,13 @@ to sops-nix for zero-migration-friction.
 | Key management | age key file on disk | API auth (no key files) |
 | Access control | All-or-nothing (have key = see everything) | Per-path, per-role, per-auth-method |
 | Audit | git blame | Full audit log (who, when, what, from where) |
-| Update flow | Edit sops file → commit → push → rebuild | `akeyless update-secret-val` → rebuild (or runtime fetch) |
+| Update flow | Edit sops file, commit, push, rebuild | `akeyless update-secret-val`, rebuild |
 | Team scaling | Share age key (risky) | Add auth methods with scoped roles |
 | Rotation | Manual | API call (automatic on paid tier) |
-| Offline support | Yes (local file) | No (requires API access) — cached fallback |
-| CI/CD | Needs age key in pipeline | JWT auth — zero stored credentials |
+| Offline support | Yes (local file) | No (requires API access) -- cached fallback |
+| CI/CD | Needs age key in pipeline | JWT auth -- zero stored credentials |
 
 ## Compatibility with sops-nix
-
-The Nix module interface is designed to be a near-drop-in:
 
 ```nix
 # sops-nix (before)
@@ -75,42 +67,83 @@ akeyless.secrets."/pleme/github/token" = {
 };
 ```
 
-The key difference: secret names are Akeyless paths (e.g., `/pleme/github/token`)
+Key difference: secret names are Akeyless paths (e.g., `/pleme/github/token`)
 instead of YAML keys (e.g., `github/token`).
 
-## Components
+## Rust Binary Architecture
 
-### 1. `akeyless-install-secrets` (Rust binary)
+### Source Layout
 
-The core binary that runs at activation time.
+```
+src/
+├── main.rs            # clap CLI: install, check, validate subcommands
+├── installer.rs       # Installer -- central orchestrator composing all traits
+├── manifest.rs        # Manifest + SecretSpec + TemplateSpec parsing
+├── config.rs          # Config loading (~/.config/akeyless-nix/akeyless-nix.yaml)
+├── auth.rs            # Akeyless authentication (read creds, POST /auth)
+├── client.rs          # AkeylessClient -- SecretProvider impl (POST /get-secret-value)
+├── fetch.rs           # fetch_all() -- iterate secrets via SecretProvider trait
+├── template.rs        # Placeholder substitution: <AKEYLESS:hash:PLACEHOLDER> -> value
+├── generation.rs      # Generation lifecycle: create, switch symlinks, prune
+├── write.rs           # File writing with permissions + ownership (chown)
+├── cache.rs           # FsCache -- CacheStore impl for offline fallback
+├── traits.rs          # Trait definitions: SecretProvider, FileWriter, CacheStore
+└── platform/
+    ├── mod.rs         # Platform-conditional compilation
+    ├── darwin.rs      # macOS-specific (reserved)
+    └── linux.rs       # Linux-specific (reserved)
+```
 
-**Crate dependencies:**
-- `shikumi` — config discovery + loading (`~/.config/akeyless-nix/`)
-- `todoku` — HTTP client for Akeyless API (auth, get-secret-value)
-- `anyhow` / `thiserror` — error handling
-- `serde` / `serde_json` — manifest parsing
-- `clap` — CLI (install, check, validate subcommands)
-- `tokio` — async runtime for API calls
+### Trait Hierarchy
 
-**Config file** (`~/.config/akeyless-nix/akeyless-nix.yaml`):
+All I/O boundaries are abstracted behind traits for testability:
+
+- **`SecretProvider`** -- fetch a secret value by Akeyless path.
+  Auth is a separate concern (`auth.rs`), not part of this trait.
+  Impls: `AkeylessClient` (real), test mocks.
+
+- **`FileWriter`** -- directory creation, file removal, symlink creation.
+  Used by generation management. Secret file writing (with permissions and
+  ownership) is handled separately by `write::write_secret_with_ownership`.
+  Impls: `FsFileWriter` (real), test mocks.
+
+- **`CacheStore`** -- persist and load secret maps for offline fallback.
+  Impls: `FsCache` (real), test mocks.
+
+### Installer Flow
+
+The `Installer` struct is the central service that composes all dependencies:
+
+```
+Installer::new(provider: &dyn SecretProvider, cache: Option<&dyn CacheStore>)
+  .install(manifest, ignore_passwd)
+    1. Fetch secrets (with cache fallback on failure)
+    2. Render templates (pure computation)
+    3. Create generation directory, write secret + template files
+    4. Switch symlinks atomically
+    5. Prune old generations
+    6. Cache secrets (non-fatal)
+```
+
+### Config File
+
+`~/.config/akeyless-nix/akeyless-nix.yaml` (falls back to defaults if absent):
+
 ```yaml
-# Bootstrap credentials — how to authenticate
-# These must exist before first activation
 auth:
   access_id_file: ~/.config/akeyless/access-id
   access_key_file: ~/.config/akeyless/access-key
-
-# API endpoint (default: public SaaS)
 api_url: https://api.akeyless.io
-
-# Cache settings
 cache:
   enabled: true
   dir: ~/.cache/akeyless-nix
-  ttl_seconds: 3600  # serve cached if API unreachable
+  ttl_seconds: 3600
 ```
 
-**Manifest format** (generated by Nix module, read by binary):
+### Manifest Format
+
+Generated by Nix module at build time, consumed at activation time:
+
 ```json
 {
   "secrets": [
@@ -118,8 +151,12 @@ cache:
       "akeyless_path": "/pleme/github/token",
       "file_path": "/Users/luis/.config/github/token",
       "mode": "0600",
-      "owner": "luis",
-      "group": "staff"
+      "owner": "",
+      "group": "",
+      "uid": null,
+      "gid": null,
+      "restart_units": [],
+      "reload_units": []
     }
   ],
   "templates": [
@@ -136,133 +173,38 @@ cache:
 }
 ```
 
-**Subcommands:**
-- `akeyless-install-secrets install <manifest>` — fetch + write + switch generation
-- `akeyless-install-secrets check <manifest>` — validate manifest, test auth, dry-run
-- `akeyless-install-secrets validate <manifest>` — check paths exist in Akeyless
+## Nix Module Architecture
 
-**Offline/cache behavior:**
-- On successful fetch: cache secret values to encrypted local store
-- On API failure: serve from cache if within TTL
-- On first run with no cache: fail hard (secrets required)
-- Cache encrypted with a local key derived from the access-key
+### Shared Library (`module/lib.nix`)
 
-### 2. Home-Manager Module (`module/home-manager.nix`)
+Common definitions used by all three modules:
 
-```nix
-{ config, lib, pkgs, ... }:
-let
-  cfg = config.akeyless;
-in {
-  options.akeyless = {
-    enable = lib.mkEnableOption "Akeyless secret management";
+- `secretSubmodule` / `templateSubmodule` -- option type definitions
+- `effectiveSecretPath` / `effectiveTemplateContent` -- path resolution helpers
+- `buildManifest` -- generates the JSON manifest derivation
+- `mkPlaceholders` -- generates placeholder map for template substitution
+- `collectRestartUnits` / `collectReloadUnits` -- unit aggregation
 
-    package = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs.akeyless-install-secrets;
-    };
+### Home-Manager Module
 
-    secrets = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.submodule {
-        options = {
-          path = lib.mkOption { type = lib.types.str; };
-          mode = lib.mkOption { type = lib.types.str; default = "0400"; };
-          owner = lib.mkOption { type = lib.types.str; default = ""; };
-          group = lib.mkOption { type = lib.types.str; default = ""; };
-        };
-      });
-      default = {};
-    };
+- Activation script runs after `writeBoundary`
+- Failure is non-fatal (logged warning) to avoid bricking rebuilds offline
+- Uses `ignorePasswd` option for CI/dry-run contexts
 
-    templates = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.submodule {
-        options = {
-          path = lib.mkOption { type = lib.types.str; };
-          content = lib.mkOption { type = lib.types.str; };
-          mode = lib.mkOption { type = lib.types.str; default = "0400"; };
-        };
-      });
-      default = {};
-    };
+### Darwin Module
 
-    placeholder = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      readOnly = true;
-    };
+- Imports home-manager module
+- Adds launchd agent (`io.pleme.akeyless-nix`) for boot/login-time refresh
+- Copies manifest to stable path so launchd can reference it
+- Respects `ignorePasswd` in both activation script and launchd agent
 
-    auth = {
-      accessIdFile = lib.mkOption {
-        type = lib.types.str;
-        default = "$HOME/.config/akeyless/access-id";
-      };
-      accessKeyFile = lib.mkOption {
-        type = lib.types.str;
-        default = "$HOME/.config/akeyless/access-key";
-      };
-    };
+### NixOS Module
 
-    apiUrl = lib.mkOption {
-      type = lib.types.str;
-      default = "https://api.akeyless.io";
-    };
-
-    cache = {
-      enable = lib.mkOption { type = lib.types.bool; default = true; };
-      ttlSeconds = lib.mkOption { type = lib.types.int; default = 3600; };
-    };
-  };
-
-  config = lib.mkIf cfg.enable {
-    # Generate placeholders for template substitution
-    akeyless.placeholder = lib.mapAttrs (name: _:
-      "<AKEYLESS:${builtins.hashString "sha256" name}:PLACEHOLDER>"
-    ) cfg.secrets;
-
-    # Write manifest to Nix store
-    # Wire activation script (Darwin: launchd, Linux: systemd)
-    # Deploy config file via shikumi pattern
-  };
-}
-```
-
-### 3. Darwin Module (`module/darwin.nix`)
-
-Like home-manager but uses `launchd.agents` for persistence across reboots
-and `system.activationScripts.postActivation` for rebuild-time execution.
-
-### 4. NixOS Module (`module/nixos.nix`)
-
-Like home-manager but:
-- Secrets written to `/run/secrets/` (ramfs)
-- Supports `owner`/`group` as uid/gid
-- `neededForUsers` flag for pre-sysusers decryption
-- `restartUnits`/`reloadUnits` for systemd integration
-
-## Rust Binary Architecture
-
-```
-src/
-├── main.rs            # clap CLI: install, check, validate
-├── manifest.rs        # Manifest parsing (secrets, templates, paths)
-├── auth.rs            # Akeyless authentication (read creds, get token)
-├── client.rs          # Akeyless API client (todoku-based HTTP)
-├── fetch.rs           # Secret fetching (parallel, with retries)
-├── write.rs           # File writing (permissions, ownership, atomicity)
-├── template.rs        # Placeholder substitution in templates
-├── generation.rs      # Generation management (create, switch, prune)
-├── cache.rs           # Encrypted local cache for offline fallback
-├── config.rs          # Shikumi-based config loading
-└── platform/
-    ├── mod.rs         # Platform trait
-    ├── darwin.rs      # macOS: HFS RAM disk, launchd integration
-    └── linux.rs       # Linux: ramfs/tmpfs mounting
-```
-
-**Trait abstractions (for testability):**
-- `SecretProvider` — fetch secrets (real API vs mock)
-- `FileWriter` — write files (real FS vs in-memory)
-- `GenerationStore` — manage generations (real FS vs test)
-- `CacheStore` — read/write cache (real FS vs in-memory)
+- Secrets written to `/run/akeyless-nix/` (in-memory)
+- Supports `owner`/`group` with `root` defaults (vs empty for HM)
+- `neededForUsers` flag for pre-sysusers secret decryption
+- `restartUnits`/`reloadUnits` for systemd service integration
+- Activation runs after `specialfs`, `users`, `groups`
 
 ## Nix Integration
 
@@ -272,7 +214,6 @@ src/
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     substrate.url = "github:pleme-io/substrate";
-    # ... standard pleme-io inputs
   };
   outputs = { self, nixpkgs, substrate, ... }:
     (import "${substrate}/lib/rust-tool-release-flake.nix" { ... })
@@ -281,41 +222,21 @@ src/
       src = self;
       repo = "pleme-io/akeyless-nix";
     } // {
-      homeManagerModules.default = import ./module/home-manager.nix;
+      homeManagerModules.default = import ./module;
       darwinModules.default = import ./module/darwin.nix;
       nixosModules.default = import ./module/nixos.nix;
     };
 }
 ```
 
-## Migration Path from sops-nix
-
-### Phase 1: Parallel operation
-Both sops-nix and akeyless-nix active. New secrets go to Akeyless.
-Existing sops secrets unchanged.
-
-### Phase 2: Mirror secrets
-Copy sops secrets to Akeyless. Both systems write the same files.
-Verify akeyless-nix produces identical output.
-
-### Phase 3: Cut over
-Disable sops-nix. Remove secrets.yaml. Remove age key.
-All secrets from Akeyless.
-
-### Phase 4: Clean up
-Remove sops-nix from flake inputs. Remove sops from home.packages.
-Update documentation.
-
 ## Bootstrap Problem
 
 The chicken-and-egg: akeyless-nix needs credentials to fetch secrets,
 but the credentials themselves might be secrets.
 
-**Solution:** Bootstrap credentials live in a minimal sops-encrypted file
-OR are provisioned manually once:
+**Solution:** Bootstrap credentials are provisioned manually once:
 
 ```bash
-# One-time setup on a new machine
 mkdir -p ~/.config/akeyless
 echo "p-nn5huxl36myiam" > ~/.config/akeyless/access-id
 echo "secret-key-here" > ~/.config/akeyless/access-key
@@ -323,14 +244,27 @@ chmod 600 ~/.config/akeyless/*
 ```
 
 After first activation, akeyless-nix manages everything else.
-The access-id/access-key bootstrap is the ONE thing that needs
-manual provisioning (or a minimal sops secret for just those two values).
 
 ## Testing Strategy
 
-- Unit tests with mock SecretProvider (no API calls)
-- Integration tests with real Akeyless account (CI only)
-- Nix module evaluation tests (pure Nix, no secrets needed)
-- Generation switching tests (tmpdir-based)
-- Template rendering tests (placeholder substitution)
-- Cache tests (offline behavior simulation)
+50 tests covering:
+- **Unit tests** with mock `SecretProvider` and `CacheStore` (no API calls)
+- **Integration tests** exercising full install flow with mocks
+- **Config tests** -- YAML loading, defaults, path expansion
+- **Manifest tests** -- parsing, uid/gid, long paths, empty manifests
+- **Template tests** -- placeholder substitution, passthrough, newlines, special chars
+- **Generation tests** -- lifecycle, pruning, empty manifests, nonexistent dirs
+- **Cache tests** -- store/load cycle, permissions, missing cache
+- **Installer tests** -- full flow, cache fallback, empty manifests, check command
+
+All tests use `ignore_passwd = true` to avoid requiring root or specific system users.
+
+## Edge Cases Handled
+
+- Manifest with 0 secrets and 0 templates: creates empty generation, switches symlink
+- Secret values with newlines or special characters: passed through verbatim
+- `generations_dir` does not exist yet: created automatically
+- Prune with fewer generations than `keep_generations`: no-op
+- API failure with cache: falls back to cached secrets with warning
+- API failure without cache: hard fail
+- Empty owner/group strings: skip chown entirely (-1 uid/gid)
