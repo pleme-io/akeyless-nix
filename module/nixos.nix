@@ -91,6 +91,18 @@ in {
       default = {};
     };
 
+    defaultSecretsMountPoint = lib.mkOption {
+      type = lib.types.str;
+      default = "/run/akeyless-nix.d";
+      description = "Directory for secret generations.";
+    };
+
+    defaultSymlinkPath = lib.mkOption {
+      type = lib.types.str;
+      default = "/run/akeyless-nix";
+      description = "Symlink path for current generation + auto-generated secret paths.";
+    };
+
     keepGenerations = lib.mkOption {
       type = lib.types.int;
       default = 2;
