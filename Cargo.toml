@@ -25,11 +25,10 @@ thiserror = "2.0"
 tokio = { version = "1.40", features = ["full"] }
 akeyless-api = { git = "https://github.com/pleme-io/akeyless-api", features = ["rustls-tls"] }
 igata = { git = "https://github.com/pleme-io/igata" }
+shikumi = { git = "https://github.com/pleme-io/shikumi" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-dirs = "6.0"
 shellexpand = "3.1"
-serde_yaml = "0.9"
 libc = "0.2"
 sha2 = "0.10"
 

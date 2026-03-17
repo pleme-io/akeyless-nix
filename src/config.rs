@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use shikumi::{ConfigDiscovery, Format, ProviderChain};
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
+    #[serde(default = "default_auth")]
     pub auth: AuthConfig,
     #[serde(default = "default_api_url")]
     pub api_url: String,
@@ -11,7 +13,7 @@ pub struct Config {
     pub cache: CacheConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AuthConfig {
     #[serde(default = "default_access_id_file")]
     pub access_id_file: String,
@@ -19,7 +21,7 @@ pub struct AuthConfig {
     pub access_key_file: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct CacheConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -33,6 +35,25 @@ pub struct CacheConfig {
     pub ttl_seconds: u64,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            auth: default_auth(),
+            api_url: default_api_url(),
+            cache: CacheConfig::default(),
+        }
+    }
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            access_id_file: default_access_id_file(),
+            access_key_file: default_access_key_file(),
+        }
+    }
+}
+
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
@@ -43,6 +64,9 @@ impl Default for CacheConfig {
     }
 }
 
+fn default_auth() -> AuthConfig {
+    AuthConfig::default()
+}
 fn default_api_url() -> String {
     "https://api.akeyless.io".to_string()
 }
@@ -68,30 +92,37 @@ pub(crate) fn expand_path(path: &str) -> PathBuf {
     PathBuf::from(expanded.as_ref())
 }
 
-/// Load config from ~/.config/akeyless-nix/akeyless-nix.yaml
-/// Falls back to defaults if file doesn't exist.
+/// Load config using shikumi's config discovery and provider chain.
+///
+/// Discovery order (via `ConfigDiscovery`):
+/// 1. `$AKEYLESS_NIX_CONFIG` environment variable override
+/// 2. `$XDG_CONFIG_HOME/akeyless-nix/akeyless-nix.yaml`
+/// 3. `$HOME/.config/akeyless-nix/akeyless-nix.yaml`
+/// 4. Legacy: `$HOME/.akeyless-nix`, `$HOME/.akeyless-nix.toml`
+///
+/// Provider chain layering (via `ProviderChain`):
+/// `Config::default()` → config file → `AKEYLESS_NIX_` env vars
+///
+/// Falls back to defaults if no config file exists at any location.
 pub fn load() -> Result<Config> {
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("akeyless-nix");
-    let config_path = config_dir.join("akeyless-nix.yaml");
+    let defaults = Config::default();
 
-    if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("reading config {}", config_path.display()))?;
-        serde_yaml::from_str(&content)
-            .with_context(|| format!("parsing config {}", config_path.display()))
-    } else {
-        // Use defaults — credentials from standard Akeyless paths
-        Ok(Config {
-            auth: AuthConfig {
-                access_id_file: default_access_id_file(),
-                access_key_file: default_access_key_file(),
-            },
-            api_url: default_api_url(),
-            cache: CacheConfig::default(),
-        })
+    let discovery = ConfigDiscovery::new("akeyless-nix")
+        .env_override("AKEYLESS_NIX_CONFIG")
+        .formats(&[Format::Yaml]);
+
+    let mut chain = ProviderChain::new().with_defaults(&defaults);
+
+    if let Ok(path) = discovery.discover() {
+        chain = chain.with_file(&path);
     }
+    // If no config file found, we proceed with defaults + env overrides only.
+
+    chain = chain.with_env("AKEYLESS_NIX_");
+
+    chain
+        .extract()
+        .context("loading akeyless-nix configuration")
 }
 
 impl Config {
@@ -115,18 +146,19 @@ mod tests {
     #[test]
     fn test_default_config() {
         // When no config file exists, defaults should work
-        let config = Config {
-            auth: AuthConfig {
-                access_id_file: "~/.config/akeyless/access-id".to_string(),
-                access_key_file: "~/.config/akeyless/access-key".to_string(),
-            },
-            api_url: "https://api.akeyless.io".to_string(),
-            cache: CacheConfig::default(),
-        };
+        let config = Config::default();
 
         assert_eq!(config.api_url, "https://api.akeyless.io");
         assert!(config.cache.enabled);
         assert_eq!(config.cache.ttl_seconds, 3600);
+        assert_eq!(
+            config.auth.access_id_file,
+            "~/.config/akeyless/access-id"
+        );
+        assert_eq!(
+            config.auth.access_key_file,
+            "~/.config/akeyless/access-key"
+        );
     }
 
     #[test]
@@ -136,8 +168,8 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_yaml_file() {
-        let dir = std::env::temp_dir().join("akeyless-nix-test-config-yaml");
+    fn test_provider_chain_loads_yaml_file() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-config-chain");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -154,8 +186,12 @@ cache:
         let yaml_path = dir.join("test-config.yaml");
         std::fs::write(&yaml_path, yaml_content).unwrap();
 
-        let content = std::fs::read_to_string(&yaml_path).unwrap();
-        let config: Config = serde_yaml::from_str(&content).unwrap();
+        // Test ProviderChain directly (no env var contamination)
+        let config: Config = ProviderChain::new()
+            .with_defaults(&Config::default())
+            .with_file(&yaml_path)
+            .extract()
+            .unwrap();
 
         assert_eq!(config.auth.access_id_file, "/tmp/test-access-id");
         assert_eq!(config.auth.access_key_file, "/tmp/test-access-key");
@@ -168,17 +204,55 @@ cache:
     }
 
     #[test]
-    fn test_load_yaml_with_defaults() {
-        // Minimal YAML — all optional fields should use defaults
-        let yaml_content = r#"
-auth: {}
-"#;
-        let config: Config = serde_yaml::from_str(yaml_content).unwrap();
+    fn test_provider_chain_defaults_without_file() {
+        // ProviderChain with defaults only should produce correct defaults
+        let config: Config = ProviderChain::new()
+            .with_defaults(&Config::default())
+            .extract()
+            .unwrap();
 
         assert_eq!(config.auth.access_id_file, "~/.config/akeyless/access-id");
-        assert_eq!(config.auth.access_key_file, "~/.config/akeyless/access-key");
+        assert_eq!(
+            config.auth.access_key_file,
+            "~/.config/akeyless/access-key"
+        );
         assert_eq!(config.api_url, "https://api.akeyless.io");
         assert!(config.cache.enabled);
         assert_eq!(config.cache.ttl_seconds, 3600);
+    }
+
+    #[test]
+    fn test_provider_chain_partial_override() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-config-partial");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let yaml_content = "api_url: https://override.example.com\n";
+        let yaml_path = dir.join("partial-config.yaml");
+        std::fs::write(&yaml_path, yaml_content).unwrap();
+
+        let config: Config = ProviderChain::new()
+            .with_defaults(&Config::default())
+            .with_file(&yaml_path)
+            .extract()
+            .unwrap();
+
+        // Overridden value
+        assert_eq!(config.api_url, "https://override.example.com");
+        // Default values preserved
+        assert_eq!(config.auth.access_id_file, "~/.config/akeyless/access-id");
+        assert!(config.cache.enabled);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_discovery_uses_yaml_format() {
+        // Verify ConfigDiscovery scans for yaml files
+        let discovery = ConfigDiscovery::new("akeyless-nix")
+            .formats(&[Format::Yaml]);
+        let paths = discovery.standard_paths();
+        let path_strs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        assert!(path_strs.iter().any(|p| p.contains("akeyless-nix/akeyless-nix.yaml")));
     }
 }
