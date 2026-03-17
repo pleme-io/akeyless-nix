@@ -79,7 +79,7 @@ src/
 ├── main.rs            # clap CLI: install, check, validate subcommands
 ├── installer.rs       # Installer -- central orchestrator composing all traits
 ├── manifest.rs        # Manifest + SecretSpec + TemplateSpec parsing
-├── config.rs          # Config loading (~/.config/akeyless-nix/akeyless-nix.yaml)
+├── config.rs          # Config loading via shikumi (XDG discovery + AKEYLESS_NIX_* env overlay)
 ├── auth.rs            # Akeyless authentication (read creds, POST /auth)
 ├── client.rs          # AkeylessClient -- SecretProvider impl (POST /get-secret-value)
 ├── fetch.rs           # fetch_all() -- iterate secrets via SecretProvider trait
