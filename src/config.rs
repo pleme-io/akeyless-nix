@@ -145,7 +145,6 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        // When no config file exists, defaults should work
         let config = Config::default();
 
         assert_eq!(config.api_url, "https://api.akeyless.io");
@@ -186,7 +185,6 @@ cache:
         let yaml_path = dir.join("test-config.yaml");
         std::fs::write(&yaml_path, yaml_content).unwrap();
 
-        // Test ProviderChain directly (no env var contamination)
         let config: Config = ProviderChain::new()
             .with_defaults(&Config::default())
             .with_file(&yaml_path)
@@ -205,7 +203,6 @@ cache:
 
     #[test]
     fn test_provider_chain_defaults_without_file() {
-        // ProviderChain with defaults only should produce correct defaults
         let config: Config = ProviderChain::new()
             .with_defaults(&Config::default())
             .extract()
@@ -237,9 +234,7 @@ cache:
             .extract()
             .unwrap();
 
-        // Overridden value
         assert_eq!(config.api_url, "https://override.example.com");
-        // Default values preserved
         assert_eq!(config.auth.access_id_file, "~/.config/akeyless/access-id");
         assert!(config.cache.enabled);
 
@@ -248,7 +243,6 @@ cache:
 
     #[test]
     fn test_config_discovery_uses_yaml_format() {
-        // Verify ConfigDiscovery scans for yaml files
         let discovery = ConfigDiscovery::new("akeyless-nix")
             .formats(&[Format::Yaml]);
         let paths = discovery.standard_paths();
@@ -340,6 +334,21 @@ cache:
     }
 
     #[test]
+    fn test_auth_config_default() {
+        let auth = AuthConfig::default();
+        assert_eq!(auth.access_id_file, "~/.config/akeyless/access-id");
+        assert_eq!(auth.access_key_file, "~/.config/akeyless/access-key");
+    }
+
+    #[test]
+    fn test_cache_config_default() {
+        let cache = CacheConfig::default();
+        assert!(cache.enabled);
+        assert_eq!(cache.dir, "~/.cache/akeyless-nix");
+        assert_eq!(cache.ttl_seconds, 3600);
+    }
+
+    #[test]
     fn test_config_serde_roundtrip() {
         let config = Config::default();
         let json = serde_json::to_string(&config).unwrap();
@@ -367,6 +376,27 @@ cache:
     }
 
     #[test]
+    fn test_config_empty_yaml_uses_defaults() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-config-empty-yaml");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let yaml_path = dir.join("empty.yaml");
+        std::fs::write(&yaml_path, "{}").unwrap();
+
+        let config: Config = ProviderChain::new()
+            .with_defaults(&Config::default())
+            .with_file(&yaml_path)
+            .extract()
+            .unwrap();
+
+        assert_eq!(config.api_url, "https://api.akeyless.io");
+        assert!(config.cache.enabled);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_config_cache_disabled_via_yaml() {
         let dir = std::env::temp_dir().join("akeyless-nix-test-config-cache-disabled");
         let _ = std::fs::remove_dir_all(&dir);
@@ -387,20 +417,5 @@ cache:
         assert_eq!(config.api_url, "https://api.akeyless.io");
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_auth_config_default_values() {
-        let auth = AuthConfig::default();
-        assert_eq!(auth.access_id_file, "~/.config/akeyless/access-id");
-        assert_eq!(auth.access_key_file, "~/.config/akeyless/access-key");
-    }
-
-    #[test]
-    fn test_cache_config_default_values() {
-        let cache = CacheConfig::default();
-        assert!(cache.enabled);
-        assert_eq!(cache.dir, "~/.cache/akeyless-nix");
-        assert_eq!(cache.ttl_seconds, 3600);
     }
 }

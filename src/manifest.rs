@@ -384,6 +384,40 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_missing_required_field() {
+        let json = r#"{
+            "secrets": [{"file_path": "/tmp/test"}],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let result: Result<Manifest, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "missing akeyless_path should fail");
+    }
+
+    #[test]
+    fn test_parse_missing_generations_dir() {
+        let json = r#"{
+            "secrets": [],
+            "templates": [],
+            "symlink_path": "/tmp/s"
+        }"#;
+        let result: Result<Manifest, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "missing generations_dir should fail");
+    }
+
+    #[test]
+    fn test_parse_missing_symlink_path() {
+        let json = r#"{
+            "secrets": [],
+            "templates": [],
+            "generations_dir": "/tmp/g"
+        }"#;
+        let result: Result<Manifest, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "missing symlink_path should fail");
+    }
+
+    #[test]
     fn test_secret_spec_default_owner_group() {
         let json = r#"{
             "secrets": [{"akeyless_path": "/test", "file_path": "/tmp/t"}],
@@ -477,6 +511,8 @@ mod tests {
         assert_eq!(manifest.secrets.len(), 3);
         assert_eq!(manifest.templates.len(), 2);
         assert_eq!(manifest.keep_generations, 10);
+        assert_eq!(manifest.templates[0].name, "t1");
+        assert_eq!(manifest.templates[1].name, "t2");
     }
 
     #[test]
@@ -489,11 +525,7 @@ mod tests {
             "unknown_field": "should be ignored",
             "extra": 42
         }"#;
-        // serde default behavior with deny_unknown_fields depends on config.
-        // Test that unknown fields at least parse or fail predictably.
         let result: Result<Manifest, _> = serde_json::from_str(json);
-        // This test documents current behavior: unknown fields are either
-        // ignored (default serde) or rejected (#[serde(deny_unknown_fields)])
         if let Ok(m) = result {
             assert_eq!(m.generations_dir, "/tmp/g");
         }
@@ -537,5 +569,44 @@ mod tests {
         assert!(spec.group.is_empty());
         assert_eq!(spec.uid, None);
         assert_eq!(spec.gid, None);
+    }
+
+    #[test]
+    fn test_secret_with_special_chars_in_path() {
+        let json = r#"{
+            "secrets": [{"akeyless_path": "/pleme/prod/db-password.v2", "file_path": "/tmp/test"}],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets[0].akeyless_path, "/pleme/prod/db-password.v2");
+    }
+
+    #[test]
+    fn test_template_with_all_fields() {
+        let json = r#"{
+            "secrets": [],
+            "templates": [
+                {
+                    "name": "full",
+                    "content": "data",
+                    "file_path": "/tmp/full",
+                    "mode": "0644",
+                    "owner": "root",
+                    "group": "wheel",
+                    "uid": 0,
+                    "gid": 0
+                }
+            ],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.templates[0].mode, "0644");
+        assert_eq!(manifest.templates[0].owner, "root");
+        assert_eq!(manifest.templates[0].group, "wheel");
+        assert_eq!(manifest.templates[0].uid, Some(0));
+        assert_eq!(manifest.templates[0].gid, Some(0));
     }
 }

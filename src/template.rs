@@ -227,7 +227,6 @@ mod tests {
 
     #[test]
     fn sha256_hex_matches_nix_builtins_hash_string() {
-        // Verified via: nix-instantiate --eval -E 'builtins.hashString "sha256" "/pleme/token"'
         let expected = "9600f4f62653c71f3daed10e123128ba7403a07835c4aa5591cd1a2b833aa6ce";
         let actual = sha256_hex("/pleme/token");
         assert_eq!(
@@ -316,7 +315,6 @@ mod tests {
 
     #[test]
     fn sanitize_double_slashes() {
-        // trim_start_matches removes all leading slashes
         assert_eq!(sanitize_var_name("//pleme/token"), "pleme_token");
     }
 
@@ -327,7 +325,6 @@ mod tests {
 
     #[test]
     fn sanitize_dots_replaced() {
-        // Dots become underscores — MiniJinja treats dots as attribute access
         assert_eq!(sanitize_var_name("/app.prod/token"), "app_prod_token");
     }
 
@@ -480,6 +477,60 @@ mod tests {
         assert_eq!(result, "val=");
     }
 
+    #[test]
+    fn placeholder_value_containing_placeholder_syntax() {
+        let engine = PlaceholderEngine;
+        let mut secrets = BTreeMap::new();
+        secrets.insert(
+            "/meta".to_string(),
+            "<AKEYLESS:fake:PLACEHOLDER>".to_string(),
+        );
+
+        let hash = sha256_hex("/meta");
+        let content = format!("v=<AKEYLESS:{hash}:PLACEHOLDER>");
+
+        let result = engine.render(&content, &secrets).unwrap();
+        assert_eq!(result, "v=<AKEYLESS:fake:PLACEHOLDER>");
+    }
+
+    // ── IgataEngine error/edge tests ─────────────────────────────────
+
+    #[test]
+    fn igata_undefined_variable_renders_empty() {
+        let engine = IgataEngine::new();
+        let result = engine.render("[= undefined_var =]", &BTreeMap::new());
+        assert!(result.is_ok(), "igata renders undefined vars as empty");
+    }
+
+    #[test]
+    fn igata_empty_template() {
+        let engine = IgataEngine::new();
+        let result = engine.render("", &BTreeMap::new()).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn igata_special_chars_in_value() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/key".to_string(), "p@ss$w0rd!&<>\"'\\".to_string());
+
+        let result = engine
+            .render("pass=[= key =]", &secrets)
+            .unwrap();
+        assert_eq!(result, "pass=p@ss$w0rd!&<>\"'\\");
+    }
+
+    #[test]
+    fn igata_newline_in_value() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/cert".to_string(), "line1\nline2\nline3".to_string());
+
+        let result = engine.render("cert=[= cert =]", &secrets).unwrap();
+        assert_eq!(result, "cert=line1\nline2\nline3");
+    }
+
     // ── sanitize_var_name edge cases ──────────────────────────────────
 
     #[test]
@@ -488,10 +539,28 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_only_slash() {
+        assert_eq!(sanitize_var_name("/"), "");
+    }
+
+    #[test]
     fn sanitize_mixed_special_chars() {
         assert_eq!(
             sanitize_var_name("/a.b-c/d-e.f"),
             "a_b_c_d_e_f"
+        );
+    }
+
+    #[test]
+    fn sanitize_multiple_consecutive_slashes() {
+        assert_eq!(sanitize_var_name("///a///b///"), "a___b___");
+    }
+
+    #[test]
+    fn sanitize_mixed_separators() {
+        assert_eq!(
+            sanitize_var_name("/my-app.v2/db-host"),
+            "my_app_v2_db_host"
         );
     }
 
@@ -545,6 +614,25 @@ mod tests {
         assert_eq!(rendered[2].content, "static");
     }
 
+    #[test]
+    fn render_all_engine_error_propagates() {
+        struct FailingEngine;
+        impl TemplateEngine for FailingEngine {
+            fn render(
+                &self,
+                _template: &str,
+                _secrets: &BTreeMap<String, String>,
+            ) -> Result<String> {
+                anyhow::bail!("render failed")
+            }
+        }
+
+        let engine = FailingEngine;
+        let templates = vec![TemplateSpec::for_test("t", "content", "/tmp/t")];
+        let result = render_all(&engine, &templates, &BTreeMap::new());
+        assert!(result.is_err());
+    }
+
     // ── sha256_hex edge cases ─────────────────────────────────────────
 
     #[test]
@@ -562,5 +650,11 @@ mod tests {
         let h = sha256_hex("こんにちは");
         assert_eq!(h.len(), 64);
         assert_ne!(h, sha256_hex("hello"));
+    }
+
+    #[test]
+    fn sha256_hex_only_hex_chars() {
+        let h = sha256_hex("anything");
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

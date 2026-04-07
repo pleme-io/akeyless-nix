@@ -411,7 +411,6 @@ mod tests {
 
         installer.install(&manifest, true).await.unwrap();
 
-        // Engine should have been called once per template
         assert_eq!(engine.call_count(), 2);
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -690,6 +689,86 @@ mod tests {
             result.is_err(),
             "both provider and cache failing should error"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_with_failing_engine() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-engine-fail");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        struct FailEngine;
+        impl TemplateEngine for FailEngine {
+            fn render(
+                &self,
+                _template: &str,
+                _secrets: &BTreeMap<String, String>,
+            ) -> Result<String> {
+                anyhow::bail!("engine failure")
+            }
+        }
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/test/secret".into(), "val".into());
+
+        let manifest = Manifest {
+            secrets: vec![SecretSpec::for_test(
+                "/test/secret",
+                &dir.join("secret-file").to_string_lossy(),
+            )],
+            templates: vec![TemplateSpec::for_test("t", "content", &dir.join("t").to_string_lossy())],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let provider = MockProvider { secrets };
+        let engine = FailEngine;
+        let installer = Installer::new(&provider, &engine, None);
+
+        let result = installer.install(&manifest, true).await;
+        assert!(result.is_err(), "engine failure should propagate");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_prunes_old_generations() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-prune");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/test/secret".into(), "val".into());
+
+        let manifest = Manifest {
+            secrets: vec![SecretSpec::for_test(
+                "/test/secret",
+                &dir.join("secret-file").to_string_lossy(),
+            )],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        for _ in 0..4 {
+            let provider = MockProvider {
+                secrets: secrets.clone(),
+            };
+            let engine = PlaceholderEngine;
+            let installer = Installer::new(&provider, &engine, None);
+            installer.install(&manifest, true).await.unwrap();
+        }
+
+        let mut remaining: Vec<u64> = std::fs::read_dir(dir.join("generations"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining.len(), 2, "should keep only 2 generations");
+        assert_eq!(remaining, vec![3, 4]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
