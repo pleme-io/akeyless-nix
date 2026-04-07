@@ -147,8 +147,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Validate { manifest } => {
             let manifest = manifest::Manifest::load(&manifest)?;
-            eprintln!("akeyless-nix: manifest valid ({} secrets, {} templates)",
-                manifest.secrets.len(), manifest.templates.len());
+            eprintln!("akeyless-nix: manifest valid ({manifest})");
         }
     }
 
