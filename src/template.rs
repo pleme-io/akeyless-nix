@@ -18,6 +18,23 @@ pub struct RenderedTemplate {
     pub gid: Option<u32>,
 }
 
+impl RenderedTemplate {
+    /// Build from a `TemplateSpec` and rendered content, carrying over all metadata.
+    #[must_use]
+    pub fn from_spec(spec: &TemplateSpec, content: String) -> Self {
+        Self {
+            name: spec.name.clone(),
+            content,
+            file_path: spec.file_path.clone(),
+            mode: spec.mode.clone(),
+            owner: spec.owner.clone(),
+            group: spec.group.clone(),
+            uid: spec.uid,
+            gid: spec.gid,
+        }
+    }
+}
+
 /// Render all templates using the provided engine.
 pub(crate) fn render_all(
     engine: &dyn TemplateEngine,
@@ -29,16 +46,7 @@ pub(crate) fn render_all(
         .map(|tmpl| {
             engine
                 .render(&tmpl.content, secrets)
-                .map(|content| RenderedTemplate {
-                    name: tmpl.name.clone(),
-                    content,
-                    file_path: tmpl.file_path.clone(),
-                    mode: tmpl.mode.clone(),
-                    owner: tmpl.owner.clone(),
-                    group: tmpl.group.clone(),
-                    uid: tmpl.uid,
-                    gid: tmpl.gid,
-                })
+                .map(|content| RenderedTemplate::from_spec(tmpl, content))
         })
         .collect()
 }
