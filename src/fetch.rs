@@ -6,7 +6,7 @@ use crate::manifest::SecretSpec;
 use crate::traits::SecretProvider;
 
 /// Fetch all secrets via a `SecretProvider`. Returns a map of `akeyless_path` -> value.
-pub async fn fetch_all(
+pub(crate) async fn fetch_all(
     provider: &dyn SecretProvider,
     secrets: &[SecretSpec],
 ) -> Result<BTreeMap<String, String>> {

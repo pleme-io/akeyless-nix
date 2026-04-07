@@ -26,10 +26,13 @@ use crate::template;
 use crate::traits::{CacheStore, SecretProvider, TemplateEngine};
 
 /// Result of a successful installation.
-pub struct InstallResult {
-    pub secrets_count: usize,
-    pub templates_count: usize,
-    pub generation_number: u64,
+pub(crate) struct InstallResult {
+    /// Number of secrets written in this generation.
+    pub(crate) secrets_count: usize,
+    /// Number of rendered templates written in this generation.
+    pub(crate) templates_count: usize,
+    /// The generation number assigned to this install.
+    pub(crate) generation_number: u64,
 }
 
 /// The Installer orchestrates secret fetching, rendering, writing, and caching.

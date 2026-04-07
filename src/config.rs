@@ -104,7 +104,7 @@ pub(crate) fn expand_path(path: &str) -> PathBuf {
 /// `Config::default()` → config file → `AKEYLESS_NIX_` env vars
 ///
 /// Falls back to defaults if no config file exists at any location.
-pub fn load() -> Result<Config> {
+pub(crate) fn load() -> Result<Config> {
     let defaults = Config::default();
 
     let discovery = ConfigDiscovery::new("akeyless-nix")

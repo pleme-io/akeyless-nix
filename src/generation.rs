@@ -9,7 +9,7 @@ use crate::traits::FileWriter;
 use crate::write::{self, Ownership};
 
 /// A created generation, with its sequence number and filesystem path.
-pub struct Generation {
+pub(crate) struct Generation {
     /// Monotonically increasing generation number.
     pub number: u64,
     /// Absolute path to the generation directory.
@@ -17,7 +17,7 @@ pub struct Generation {
 }
 
 /// Create a new generation directory and write all secrets + templates.
-pub fn create(
+pub(crate) fn create(
     manifest: &Manifest,
     secrets: &BTreeMap<String, String>,
     templates: &[RenderedTemplate],
@@ -33,7 +33,7 @@ pub fn create(
 }
 
 /// Create a new generation directory using the provided `FileWriter`.
-pub fn create_with_writer(
+pub(crate) fn create_with_writer(
     manifest: &Manifest,
     secrets: &BTreeMap<String, String>,
     templates: &[RenderedTemplate],
@@ -97,7 +97,7 @@ pub fn create_with_writer(
 }
 
 /// Atomically switch the symlink to point to the new generation.
-pub fn switch(
+pub(crate) fn switch(
     manifest: &Manifest,
     genr: &Generation,
     rendered_templates: &[RenderedTemplate],
@@ -110,7 +110,7 @@ pub fn switch(
 /// Creates symlinks from each secret's declared `file_path` to the corresponding
 /// file in the generation directory, and from each rendered template's `file_path`
 /// to the rendered output.
-pub fn switch_with_writer(
+pub(crate) fn switch_with_writer(
     manifest: &Manifest,
     genr: &Generation,
     rendered_templates: &[RenderedTemplate],
@@ -162,7 +162,7 @@ pub fn switch_with_writer(
 }
 
 /// Remove old generations beyond the keep limit.
-pub fn prune(manifest: &Manifest) -> Result<()> {
+pub(crate) fn prune(manifest: &Manifest) -> Result<()> {
     let gd = Path::new(&manifest.generations_dir);
     if !gd.exists() {
         return Ok(());

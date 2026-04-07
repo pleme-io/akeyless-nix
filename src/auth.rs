@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use crate::config::Config;
 
 /// Authenticate to Akeyless and return a temporary token.
-pub async fn authenticate(config: &Config) -> Result<String> {
+pub(crate) async fn authenticate(config: &Config) -> Result<String> {
     let access_id = std::fs::read_to_string(config.access_id_path())
         .with_context(|| format!("reading access-id from {}", config.access_id_path().display()))?
         .trim()

@@ -19,7 +19,7 @@ pub struct RenderedTemplate {
 }
 
 /// Render all templates using the provided engine.
-pub fn render_all(
+pub(crate) fn render_all(
     engine: &dyn TemplateEngine,
     templates: &[TemplateSpec],
     secrets: &BTreeMap<String, String>,
@@ -121,7 +121,7 @@ impl TemplateEngine for IgataEngine {
 /// `/pleme/github/token` → `pleme_github_token`
 /// `/pleme/prod/db-password` → `pleme_prod_db_password`
 /// `/app.prod/token` → `app_prod_token`
-pub fn sanitize_var_name(path: &str) -> String {
+pub(crate) fn sanitize_var_name(path: &str) -> String {
     path.trim_start_matches('/')
         .replace(['/', '-', '.'], "_")
 }
