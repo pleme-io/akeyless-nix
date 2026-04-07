@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -117,6 +118,18 @@ impl TemplateSpec {
     }
 }
 
+impl fmt::Display for Manifest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} secrets, {} templates (keep {})",
+            self.secrets.len(),
+            self.templates.len(),
+            self.keep_generations
+        )
+    }
+}
+
 impl Manifest {
     /// Create a minimal `Manifest` rooted at `dir` for testing.
     ///
@@ -149,6 +162,32 @@ impl Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_manifest_display() {
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec::for_test("/a", "/tmp/a"),
+                SecretSpec::for_test("/b", "/tmp/b"),
+            ],
+            templates: vec![TemplateSpec::for_test("t1", "c", "/tmp/t")],
+            generations_dir: "/tmp/g".into(),
+            symlink_path: "/tmp/s".into(),
+            keep_generations: 3,
+        };
+        assert_eq!(manifest.to_string(), "2 secrets, 1 templates (keep 3)");
+    }
+
+    #[test]
+    fn test_manifest_for_test() {
+        let dir = std::path::Path::new("/tmp/test-dir");
+        let manifest = Manifest::for_test(dir);
+        assert!(manifest.secrets.is_empty());
+        assert!(manifest.templates.is_empty());
+        assert_eq!(manifest.keep_generations, 2);
+        assert!(manifest.generations_dir.contains("generations"));
+        assert!(manifest.symlink_path.contains("current"));
+    }
 
     #[test]
     fn test_parse_manifest() {
