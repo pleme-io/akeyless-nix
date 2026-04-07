@@ -95,10 +95,7 @@ async fn main() -> anyhow::Result<()> {
             let inst = installer::Installer::new(&client, engine, cache_ref);
             let result = inst.install(&manifest, ignore_passwd).await?;
 
-            eprintln!(
-                "akeyless-nix: installed {} secrets, {} templates (generation {})",
-                result.secrets_count, result.templates_count, result.generation_number
-            );
+            eprintln!("akeyless-nix: installed {result}");
         }
 
         Commands::Check { manifest } => {

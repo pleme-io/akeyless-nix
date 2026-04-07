@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -15,6 +16,12 @@ pub(crate) struct Generation {
     pub number: u64,
     /// Absolute path to the generation directory.
     pub path: PathBuf,
+}
+
+impl fmt::Display for Generation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "generation {} at {}", self.number, self.path.display())
+    }
 }
 
 /// Create a new generation directory and write all secrets + templates.
@@ -205,6 +212,15 @@ mod tests {
         assert_eq!(sanitize_name("/pleme/prod/db-password"), "pleme-prod-db-password");
         assert_eq!(sanitize_name("/a/b/c"), "a-b-c");
         assert_eq!(sanitize_name("no-slash"), "no-slash");
+    }
+
+    #[test]
+    fn test_generation_display() {
+        let genr = Generation {
+            number: 42,
+            path: PathBuf::from("/tmp/generations/42"),
+        };
+        assert_eq!(genr.to_string(), "generation 42 at /tmp/generations/42");
     }
 
     #[test]

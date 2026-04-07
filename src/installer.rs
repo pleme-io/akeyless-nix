@@ -16,6 +16,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use anyhow::Result;
 
@@ -34,6 +35,16 @@ pub(crate) struct InstallResult {
     pub(crate) templates_count: usize,
     /// The generation number assigned to this install.
     pub(crate) generation_number: u64,
+}
+
+impl fmt::Display for InstallResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} secrets, {} templates (generation {})",
+            self.secrets_count, self.templates_count, self.generation_number
+        )
+    }
 }
 
 /// The Installer orchestrates secret fetching, rendering, writing, and caching.
@@ -130,6 +141,16 @@ mod tests {
     use crate::template::{sha256_hex, IgataEngine, PlaceholderEngine};
     use async_trait::async_trait;
     use std::sync::Mutex;
+
+    #[test]
+    fn test_install_result_display() {
+        let result = InstallResult {
+            secrets_count: 3,
+            templates_count: 2,
+            generation_number: 7,
+        };
+        assert_eq!(result.to_string(), "3 secrets, 2 templates (generation 7)");
+    }
 
     struct MockProvider {
         secrets: BTreeMap<String, String>,
