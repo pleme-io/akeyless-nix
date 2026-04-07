@@ -92,44 +92,23 @@ mod tests {
             SecretSpec::for_test("/missing", "/tmp/m"),
         ];
 
-        // Should fail because /missing is not in the mock
         let result = fetch_all(&provider, &specs).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn test_fetch_duplicate_paths_deduplicates() {
+    async fn test_fetch_single_secret() {
         let mut mock_secrets = BTreeMap::new();
-        mock_secrets.insert("/dup".into(), "dup-val".into());
+        mock_secrets.insert("/only".into(), "solo".into());
 
         let provider = MockProvider {
             secrets: mock_secrets,
         };
-        let specs = vec![
-            SecretSpec::for_test("/dup", "/tmp/a"),
-            SecretSpec::for_test("/dup", "/tmp/b"),
-        ];
+        let specs = vec![SecretSpec::for_test("/only", "/tmp/only")];
 
         let result = fetch_all(&provider, &specs).await.unwrap();
-        // BTreeMap deduplicates by key, so only 1 entry
         assert_eq!(result.len(), 1);
-        assert_eq!(result["/dup"], "dup-val");
-    }
-
-    #[tokio::test]
-    async fn test_fetch_error_message_contains_path() {
-        let provider = MockProvider {
-            secrets: BTreeMap::new(),
-        };
-        let specs = vec![SecretSpec::for_test("/specific/path/for/test", "/tmp/x")];
-
-        let result = fetch_all(&provider, &specs).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("/specific/path/for/test"),
-            "error should contain the missing path: {err}"
-        );
+        assert_eq!(result["/only"], "solo");
     }
 
     #[tokio::test]
@@ -155,17 +134,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_single_secret() {
+    async fn test_fetch_empty_value() {
         let mut mock_secrets = BTreeMap::new();
-        mock_secrets.insert("/only".into(), "solo".into());
+        mock_secrets.insert("/empty".into(), String::new());
 
         let provider = MockProvider {
             secrets: mock_secrets,
         };
-        let specs = vec![SecretSpec::for_test("/only", "/tmp/only")];
+        let specs = vec![SecretSpec::for_test("/empty", "/tmp/e")];
+
+        let result = fetch_all(&provider, &specs).await.unwrap();
+        assert_eq!(result["/empty"], "");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_duplicate_paths_deduplicates() {
+        let mut mock_secrets = BTreeMap::new();
+        mock_secrets.insert("/dup".into(), "dup-val".into());
+
+        let provider = MockProvider {
+            secrets: mock_secrets,
+        };
+        let specs = vec![
+            SecretSpec::for_test("/dup", "/tmp/a"),
+            SecretSpec::for_test("/dup", "/tmp/b"),
+        ];
 
         let result = fetch_all(&provider, &specs).await.unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result["/only"], "solo");
+        assert_eq!(result["/dup"], "dup-val");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_error_message_contains_path() {
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let specs = vec![SecretSpec::for_test("/specific/path/for/test", "/tmp/x")];
+
+        let result = fetch_all(&provider, &specs).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("/specific/path/for/test"),
+            "error should contain the missing path: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_fails_on_first_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct CountingProvider {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl SecretProvider for CountingProvider {
+            async fn get_secret(&self, _path: &str) -> anyhow::Result<String> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("always fails")
+            }
+        }
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let provider = CountingProvider {
+            call_count: counter.clone(),
+        };
+        let specs = vec![
+            SecretSpec::for_test("/a", "/tmp/a"),
+            SecretSpec::for_test("/b", "/tmp/b"),
+            SecretSpec::for_test("/c", "/tmp/c"),
+        ];
+
+        let result = fetch_all(&provider, &specs).await;
+        assert!(result.is_err());
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "should stop after first failure"
+        );
     }
 }
