@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
             template_engine,
         } => {
             let cfg = config::load()?;
-            let manifest = manifest::load(&manifest)?;
+            let manifest = manifest::Manifest::load(&manifest)?;
             let token = auth::authenticate(&cfg).await?;
             let client = client::AkeylessClient::new(&cfg.api_url, &token);
             let fs_cache = cache::FsCache::new(&cfg);
@@ -103,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Check { manifest } => {
             let cfg = config::load()?;
-            let manifest = manifest::load(&manifest)?;
+            let manifest = manifest::Manifest::load(&manifest)?;
             let token = auth::authenticate(&cfg).await?;
             let client = client::AkeylessClient::new(&cfg.api_url, &token);
 
@@ -126,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Validate { manifest } => {
-            let manifest = manifest::load(&manifest)?;
+            let manifest = manifest::Manifest::load(&manifest)?;
             eprintln!("akeyless-nix: manifest valid ({} secrets, {} templates)",
                 manifest.secrets.len(), manifest.templates.len());
         }
