@@ -534,7 +534,7 @@ mod tests {
         let templates = vec![];
 
         for _ in 0..5 {
-            create(&manifest, &secrets, &templates, true).unwrap();
+            let _ = create(&manifest, &secrets, &templates, true).unwrap();
         }
 
         prune(&manifest).unwrap();
@@ -598,9 +598,9 @@ mod tests {
         let secrets = BTreeMap::new();
         let templates = vec![];
 
-        create(&manifest, &secrets, &templates, true).unwrap();
-        create(&manifest, &secrets, &templates, true).unwrap();
-        create(&manifest, &secrets, &templates, true).unwrap();
+        let _ = create(&manifest, &secrets, &templates, true).unwrap();
+        let _ = create(&manifest, &secrets, &templates, true).unwrap();
+        let _ = create(&manifest, &secrets, &templates, true).unwrap();
 
         prune(&manifest).unwrap();
 

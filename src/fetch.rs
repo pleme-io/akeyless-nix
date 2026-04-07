@@ -24,20 +24,7 @@ pub(crate) async fn fetch_all(
 mod tests {
     use super::*;
     use async_trait::async_trait;
-
-    struct MockProvider {
-        secrets: BTreeMap<String, String>,
-    }
-
-    #[async_trait]
-    impl SecretProvider for MockProvider {
-        async fn get_secret(&self, path: &str) -> anyhow::Result<String> {
-            self.secrets
-                .get(path)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("not found: {path}"))
-        }
-    }
+    use crate::testing::MockProvider;
 
     #[tokio::test]
     async fn test_fetch_all_with_mock() {

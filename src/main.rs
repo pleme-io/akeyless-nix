@@ -11,6 +11,8 @@ mod installer;
 mod manifest;
 mod platform;
 mod template;
+#[cfg(test)]
+mod testing;
 mod traits;
 mod write;
 
@@ -269,50 +271,13 @@ mod cli_tests {
 mod integration_tests {
     use std::collections::BTreeMap;
 
-    use async_trait::async_trait;
-
     use crate::fetch;
     use crate::generation;
     use crate::manifest::{Manifest, SecretSpec, TemplateSpec};
     use crate::template;
-    use crate::traits::{CacheStore, SecretProvider};
+    use crate::testing::{MockCache, MockProvider};
+    use crate::traits::CacheStore;
     use crate::write::FsFileWriter;
-
-    struct MockProvider {
-        secrets: BTreeMap<String, String>,
-    }
-
-    #[async_trait]
-    impl SecretProvider for MockProvider {
-        async fn get_secret(&self, path: &str) -> anyhow::Result<String> {
-            self.secrets
-                .get(path)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("not found: {path}"))
-        }
-    }
-
-    struct InMemoryCache {
-        data: std::sync::Mutex<Option<BTreeMap<String, String>>>,
-    }
-
-    impl InMemoryCache {
-        fn new() -> Self {
-            Self {
-                data: std::sync::Mutex::new(None),
-            }
-        }
-    }
-
-    impl CacheStore for InMemoryCache {
-        fn store(&self, secrets: &BTreeMap<String, String>) -> anyhow::Result<()> {
-            *self.data.lock().unwrap() = Some(secrets.clone());
-            Ok(())
-        }
-        fn load(&self) -> anyhow::Result<Option<BTreeMap<String, String>>> {
-            Ok(self.data.lock().unwrap().clone())
-        }
-    }
 
     #[tokio::test]
     async fn test_full_install_flow() {
@@ -384,7 +349,7 @@ mod integration_tests {
         assert!(rendered_config.contains("token: tok-123"));
 
         // Step 6: Cache via in-memory store
-        let cache = InMemoryCache::new();
+        let cache = MockCache::empty();
         cache.store(&secrets).unwrap();
         let cached = cache.load().unwrap().unwrap();
         assert_eq!(cached["/pleme/db-password"], "p@ssw0rd");

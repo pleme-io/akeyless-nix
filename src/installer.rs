@@ -139,7 +139,7 @@ mod tests {
     use super::*;
     use crate::manifest::{SecretSpec, TemplateSpec};
     use crate::template::{sha256_hex, IgataEngine, PlaceholderEngine};
-    use async_trait::async_trait;
+    use crate::testing::{FailingProvider, MockCache, MockProvider};
     use std::sync::Mutex;
 
     #[test]
@@ -150,56 +150,6 @@ mod tests {
             generation_number: 7,
         };
         assert_eq!(result.to_string(), "3 secrets, 2 templates (generation 7)");
-    }
-
-    struct MockProvider {
-        secrets: BTreeMap<String, String>,
-    }
-
-    #[async_trait]
-    impl SecretProvider for MockProvider {
-        async fn get_secret(&self, path: &str) -> Result<String> {
-            self.secrets
-                .get(path)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("not found: {path}"))
-        }
-    }
-
-    struct MockCache {
-        stored: Mutex<Option<BTreeMap<String, String>>>,
-    }
-
-    impl MockCache {
-        fn empty() -> Self {
-            Self {
-                stored: Mutex::new(None),
-            }
-        }
-        fn with_data(data: BTreeMap<String, String>) -> Self {
-            Self {
-                stored: Mutex::new(Some(data)),
-            }
-        }
-    }
-
-    impl CacheStore for MockCache {
-        fn store(&self, secrets: &BTreeMap<String, String>) -> Result<()> {
-            *self.stored.lock().unwrap() = Some(secrets.clone());
-            Ok(())
-        }
-        fn load(&self) -> Result<Option<BTreeMap<String, String>>> {
-            Ok(self.stored.lock().unwrap().clone())
-        }
-    }
-
-    struct FailingProvider;
-
-    #[async_trait]
-    impl SecretProvider for FailingProvider {
-        async fn get_secret(&self, _path: &str) -> Result<String> {
-            anyhow::bail!("API unreachable")
-        }
     }
 
     /// Mock engine that records calls and returns content unchanged.
@@ -435,7 +385,7 @@ mod tests {
         let engine = RecordingEngine::new();
         let installer = Installer::new(&provider, &engine, None);
 
-        installer.install(&manifest, true).await.unwrap();
+        let _ = installer.install(&manifest, true).await.unwrap();
 
         assert_eq!(engine.call_count(), 2);
 
@@ -616,19 +566,9 @@ mod tests {
         assert!(results[1].1);
     }
 
-    struct FailingCache;
-
-    impl CacheStore for FailingCache {
-        fn store(&self, _secrets: &BTreeMap<String, String>) -> Result<()> {
-            anyhow::bail!("cache write failed")
-        }
-        fn load(&self) -> Result<Option<BTreeMap<String, String>>> {
-            anyhow::bail!("cache read failed")
-        }
-    }
-
     #[tokio::test]
     async fn test_install_cache_store_failure_is_non_fatal() {
+        use crate::testing::FailingCache;
         let dir = std::env::temp_dir().join("akeyless-nix-test-installer-cache-fail");
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -701,6 +641,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_install_provider_failure_with_failing_cache_load() {
+        use crate::testing::FailingCache;
         let dir = std::env::temp_dir().join("akeyless-nix-test-installer-both-fail");
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -784,7 +725,7 @@ mod tests {
             };
             let engine = PlaceholderEngine;
             let installer = Installer::new(&provider, &engine, None);
-            installer.install(&manifest, true).await.unwrap();
+            let _ = installer.install(&manifest, true).await.unwrap();
         }
 
         let mut remaining: Vec<u64> = std::fs::read_dir(dir.join("generations"))
