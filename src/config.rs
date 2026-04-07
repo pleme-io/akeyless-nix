@@ -255,4 +255,152 @@ cache:
         let path_strs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
         assert!(path_strs.iter().any(|p| p.contains("akeyless-nix/akeyless-nix.yaml")));
     }
+
+    #[test]
+    fn test_access_id_path_expands_tilde() {
+        let config = Config::default();
+        let path = config.access_id_path();
+        assert!(
+            !path.to_string_lossy().contains('~'),
+            "access_id_path should expand tilde"
+        );
+        assert!(
+            path.to_string_lossy().ends_with(".config/akeyless/access-id"),
+            "should preserve relative part after tilde expansion"
+        );
+    }
+
+    #[test]
+    fn test_access_key_path_expands_tilde() {
+        let config = Config::default();
+        let path = config.access_key_path();
+        assert!(!path.to_string_lossy().contains('~'));
+        assert!(path.to_string_lossy().ends_with(".config/akeyless/access-key"));
+    }
+
+    #[test]
+    fn test_cache_dir_expands_tilde() {
+        let config = Config::default();
+        let path = config.cache_dir();
+        assert!(!path.to_string_lossy().contains('~'));
+        assert!(path.to_string_lossy().ends_with(".cache/akeyless-nix"));
+    }
+
+    #[test]
+    fn test_config_paths_with_absolute_paths() {
+        let config = Config {
+            auth: AuthConfig {
+                access_id_file: "/absolute/path/to/id".to_string(),
+                access_key_file: "/absolute/path/to/key".to_string(),
+            },
+            api_url: "https://api.example.com".to_string(),
+            cache: CacheConfig {
+                enabled: true,
+                dir: "/absolute/cache".to_string(),
+                ttl_seconds: 3600,
+            },
+        };
+        assert_eq!(
+            config.access_id_path(),
+            std::path::PathBuf::from("/absolute/path/to/id")
+        );
+        assert_eq!(
+            config.access_key_path(),
+            std::path::PathBuf::from("/absolute/path/to/key")
+        );
+        assert_eq!(
+            config.cache_dir(),
+            std::path::PathBuf::from("/absolute/cache")
+        );
+    }
+
+    #[test]
+    fn test_expand_path_absolute_unchanged() {
+        let path = expand_path("/absolute/path");
+        assert_eq!(path, std::path::PathBuf::from("/absolute/path"));
+    }
+
+    #[test]
+    fn test_expand_path_relative_unchanged() {
+        let path = expand_path("relative/path");
+        assert_eq!(path, std::path::PathBuf::from("relative/path"));
+    }
+
+    #[test]
+    fn test_expand_path_empty_string() {
+        let path = expand_path("");
+        assert_eq!(path, std::path::PathBuf::from(""));
+    }
+
+    #[test]
+    fn test_expand_path_tilde_only() {
+        let path = expand_path("~");
+        assert!(!path.to_string_lossy().contains('~'));
+        assert!(!path.to_string_lossy().is_empty());
+    }
+
+    #[test]
+    fn test_config_serde_roundtrip() {
+        let config = Config::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.api_url, config.api_url);
+        assert_eq!(
+            deserialized.auth.access_id_file,
+            config.auth.access_id_file
+        );
+        assert_eq!(
+            deserialized.auth.access_key_file,
+            config.auth.access_key_file
+        );
+        assert_eq!(deserialized.cache.enabled, config.cache.enabled);
+        assert_eq!(deserialized.cache.dir, config.cache.dir);
+        assert_eq!(deserialized.cache.ttl_seconds, config.cache.ttl_seconds);
+    }
+
+    #[test]
+    fn test_config_from_empty_json() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.api_url, "https://api.akeyless.io");
+        assert!(config.cache.enabled);
+        assert_eq!(config.cache.ttl_seconds, 3600);
+    }
+
+    #[test]
+    fn test_config_cache_disabled_via_yaml() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-config-cache-disabled");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let yaml = "cache:\n  enabled: false\n  ttl_seconds: 0\n";
+        let yaml_path = dir.join("config.yaml");
+        std::fs::write(&yaml_path, yaml).unwrap();
+
+        let config: Config = ProviderChain::new()
+            .with_defaults(&Config::default())
+            .with_file(&yaml_path)
+            .extract()
+            .unwrap();
+
+        assert!(!config.cache.enabled);
+        assert_eq!(config.cache.ttl_seconds, 0);
+        assert_eq!(config.api_url, "https://api.akeyless.io");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_auth_config_default_values() {
+        let auth = AuthConfig::default();
+        assert_eq!(auth.access_id_file, "~/.config/akeyless/access-id");
+        assert_eq!(auth.access_key_file, "~/.config/akeyless/access-key");
+    }
+
+    #[test]
+    fn test_cache_config_default_values() {
+        let cache = CacheConfig::default();
+        assert!(cache.enabled);
+        assert_eq!(cache.dir, "~/.cache/akeyless-nix");
+        assert_eq!(cache.ttl_seconds, 3600);
+    }
 }

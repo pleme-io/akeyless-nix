@@ -407,4 +407,160 @@ mod tests {
         let result = engine.render("hello", &BTreeMap::new()).unwrap();
         assert_eq!(result, "<<MOCK>>hello<</MOCK>>");
     }
+
+    // ── IgataEngine::with_syntax test ─────────────────────────────────
+
+    #[test]
+    fn igata_with_custom_syntax() {
+        let syntax = igata::Syntax {
+            variable: ("{{".to_string(), "}}".to_string()),
+            block: ("{%".to_string(), "%}".to_string()),
+            comment: ("{#".to_string(), "#}".to_string()),
+        };
+        let engine = IgataEngine::with_syntax(syntax).unwrap();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/app/token".to_string(), "secret123".to_string());
+
+        let result = engine
+            .render("key={{ app_token }}", &secrets)
+            .unwrap();
+        assert_eq!(result, "key=secret123");
+    }
+
+    #[test]
+    fn igata_default_is_same_as_new() {
+        let eng1 = IgataEngine::new();
+        let eng2 = IgataEngine::default();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/x".to_string(), "val".to_string());
+
+        let r1 = eng1.render("[= x =]", &secrets).unwrap();
+        let r2 = eng2.render("[= x =]", &secrets).unwrap();
+        assert_eq!(r1, r2);
+        assert_eq!(r1, "val");
+    }
+
+    // ── Placeholder edge cases ────────────────────────────────────────
+
+    #[test]
+    fn placeholder_unreplaced_tokens_pass_through() {
+        let engine = PlaceholderEngine;
+        let secrets = BTreeMap::new();
+        let content = "token: <AKEYLESS:deadbeef:PLACEHOLDER>";
+        let result = engine.render(content, &secrets).unwrap();
+        assert_eq!(
+            result, content,
+            "unreplaced placeholder should pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn placeholder_same_secret_twice_in_template() {
+        let engine = PlaceholderEngine;
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/token".to_string(), "abc".to_string());
+
+        let hash = sha256_hex("/token");
+        let content = format!(
+            "first=<AKEYLESS:{hash}:PLACEHOLDER> second=<AKEYLESS:{hash}:PLACEHOLDER>"
+        );
+        let result = engine.render(&content, &secrets).unwrap();
+        assert_eq!(result, "first=abc second=abc");
+    }
+
+    #[test]
+    fn placeholder_empty_secret_value() {
+        let engine = PlaceholderEngine;
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/empty".to_string(), String::new());
+
+        let hash = sha256_hex("/empty");
+        let content = format!("val=<AKEYLESS:{hash}:PLACEHOLDER>");
+        let result = engine.render(&content, &secrets).unwrap();
+        assert_eq!(result, "val=");
+    }
+
+    // ── sanitize_var_name edge cases ──────────────────────────────────
+
+    #[test]
+    fn sanitize_only_slashes() {
+        assert_eq!(sanitize_var_name("///"), "");
+    }
+
+    #[test]
+    fn sanitize_mixed_special_chars() {
+        assert_eq!(
+            sanitize_var_name("/a.b-c/d-e.f"),
+            "a_b_c_d_e_f"
+        );
+    }
+
+    // ── render_all metadata preservation ──────────────────────────────
+
+    #[test]
+    fn render_all_preserves_template_metadata() {
+        let engine = PlaceholderEngine;
+        let secrets = BTreeMap::new();
+
+        let templates = vec![TemplateSpec {
+            name: "myconfig".into(),
+            content: "plain text".into(),
+            file_path: "/opt/app/config".into(),
+            mode: "0644".into(),
+            owner: "app".into(),
+            group: "app".into(),
+            uid: Some(1000),
+            gid: Some(1000),
+        }];
+
+        let rendered = render_all(&engine, &templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(rendered[0].name, "myconfig");
+        assert_eq!(rendered[0].file_path, "/opt/app/config");
+        assert_eq!(rendered[0].mode, "0644");
+        assert_eq!(rendered[0].owner, "app");
+        assert_eq!(rendered[0].group, "app");
+        assert_eq!(rendered[0].uid, Some(1000));
+        assert_eq!(rendered[0].gid, Some(1000));
+        assert_eq!(rendered[0].content, "plain text");
+    }
+
+    #[test]
+    fn render_all_multiple_templates() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/a".to_string(), "va".to_string());
+        secrets.insert("/b".to_string(), "vb".to_string());
+
+        let templates = vec![
+            TemplateSpec::for_test("t1", "a=[= a =]", "/tmp/t1"),
+            TemplateSpec::for_test("t2", "b=[= b =]", "/tmp/t2"),
+            TemplateSpec::for_test("t3", "static", "/tmp/t3"),
+        ];
+
+        let rendered = render_all(&engine, &templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 3);
+        assert_eq!(rendered[0].content, "a=va");
+        assert_eq!(rendered[1].content, "b=vb");
+        assert_eq!(rendered[2].content, "static");
+    }
+
+    // ── sha256_hex edge cases ─────────────────────────────────────────
+
+    #[test]
+    fn sha256_hex_empty_string() {
+        let h = sha256_hex("");
+        assert_eq!(h.len(), 64);
+        assert_eq!(
+            h,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn sha256_hex_unicode() {
+        let h = sha256_hex("こんにちは");
+        assert_eq!(h.len(), 64);
+        assert_ne!(h, sha256_hex("hello"));
+    }
 }

@@ -498,4 +498,199 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn test_install_cache_fallback_with_empty_cache() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-emptycache-fallback");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let provider = FailingProvider;
+        let engine = PlaceholderEngine;
+        let cache = MockCache::empty();
+        let installer = Installer::new(&provider, &engine, Some(&cache));
+        let manifest = test_manifest(&dir);
+
+        let result = installer.install(&manifest, true).await;
+        assert!(
+            result.is_err(),
+            "empty cache cannot provide fallback, so install should fail"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_check_empty_manifest() {
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: "/tmp/g".into(),
+            symlink_path: "/tmp/s".into(),
+            keep_generations: 2,
+        };
+
+        let results = installer.check(&manifest).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_check_all_missing() {
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
+
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec::for_test("/a", "/tmp/a"),
+                SecretSpec::for_test("/b", "/tmp/b"),
+            ],
+            templates: vec![],
+            generations_dir: "/tmp/g".into(),
+            symlink_path: "/tmp/s".into(),
+            keep_generations: 2,
+        };
+
+        let results = installer.check(&manifest).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(!results[0].1);
+        assert!(!results[1].1);
+    }
+
+    #[tokio::test]
+    async fn test_check_all_present() {
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/a".into(), "va".into());
+        secrets.insert("/b".into(), "vb".into());
+
+        let provider = MockProvider { secrets };
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
+
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec::for_test("/a", "/tmp/a"),
+                SecretSpec::for_test("/b", "/tmp/b"),
+            ],
+            templates: vec![],
+            generations_dir: "/tmp/g".into(),
+            symlink_path: "/tmp/s".into(),
+            keep_generations: 2,
+        };
+
+        let results = installer.check(&manifest).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].1);
+        assert!(results[1].1);
+    }
+
+    struct FailingCache;
+
+    impl CacheStore for FailingCache {
+        fn store(&self, _secrets: &BTreeMap<String, String>) -> Result<()> {
+            anyhow::bail!("cache write failed")
+        }
+        fn load(&self) -> Result<Option<BTreeMap<String, String>>> {
+            anyhow::bail!("cache read failed")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_install_cache_store_failure_is_non_fatal() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-cache-fail");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/test/secret".into(), "value".into());
+
+        let provider = MockProvider { secrets };
+        let engine = PlaceholderEngine;
+        let cache = FailingCache;
+        let installer = Installer::new(&provider, &engine, Some(&cache));
+        let manifest = test_manifest(&dir);
+
+        let result = installer.install(&manifest, true).await;
+        assert!(
+            result.is_ok(),
+            "cache store failure should be non-fatal: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().secrets_count, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_with_no_cache_succeeds() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-no-cache");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/test/secret".into(), "my-value".into());
+
+        let provider = MockProvider { secrets };
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
+        let manifest = test_manifest(&dir);
+
+        let result = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(result.secrets_count, 1);
+        assert_eq!(result.generation_number, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_successive_generations_increment() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-gen-incr");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/test/secret".into(), "v1".into());
+
+        let provider = MockProvider {
+            secrets: secrets.clone(),
+        };
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
+        let manifest = test_manifest(&dir);
+
+        let r1 = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(r1.generation_number, 1);
+
+        let r2 = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(r2.generation_number, 2);
+
+        let r3 = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(r3.generation_number, 3);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_provider_failure_with_failing_cache_load() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-both-fail");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let provider = FailingProvider;
+        let engine = PlaceholderEngine;
+        let cache = FailingCache;
+        let installer = Installer::new(&provider, &engine, Some(&cache));
+        let manifest = test_manifest(&dir);
+
+        let result = installer.install(&manifest, true).await;
+        assert!(
+            result.is_err(),
+            "both provider and cache failing should error"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
