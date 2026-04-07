@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
     pub secrets: Vec<SecretSpec>,
     #[serde(default)]
@@ -18,7 +18,7 @@ fn default_keep() -> u32 {
     2
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SecretSpec {
     /// Path in Akeyless vault (e.g., "/pleme/prod/db-password")
     pub akeyless_path: String,
@@ -57,7 +57,7 @@ fn default_mode() -> String {
     "0400".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TemplateSpec {
     /// Template name (for symlink naming)
     pub name: String,
