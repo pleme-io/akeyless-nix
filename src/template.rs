@@ -24,24 +24,23 @@ pub(crate) fn render_all(
     templates: &[TemplateSpec],
     secrets: &BTreeMap<String, String>,
 ) -> Result<Vec<RenderedTemplate>> {
-    let mut result = Vec::new();
-
-    for tmpl in templates {
-        let rendered_content = engine.render(&tmpl.content, secrets)?;
-
-        result.push(RenderedTemplate {
-            name: tmpl.name.clone(),
-            content: rendered_content,
-            file_path: tmpl.file_path.clone(),
-            mode: tmpl.mode.clone(),
-            owner: tmpl.owner.clone(),
-            group: tmpl.group.clone(),
-            uid: tmpl.uid,
-            gid: tmpl.gid,
-        });
-    }
-
-    Ok(result)
+    templates
+        .iter()
+        .map(|tmpl| {
+            engine
+                .render(&tmpl.content, secrets)
+                .map(|content| RenderedTemplate {
+                    name: tmpl.name.clone(),
+                    content,
+                    file_path: tmpl.file_path.clone(),
+                    mode: tmpl.mode.clone(),
+                    owner: tmpl.owner.clone(),
+                    group: tmpl.group.clone(),
+                    uid: tmpl.uid,
+                    gid: tmpl.gid,
+                })
+        })
+        .collect()
 }
 
 // ── Placeholder-based engine (legacy, backward compatible) ─────────────
