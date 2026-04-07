@@ -26,6 +26,7 @@ use crate::template;
 use crate::traits::{CacheStore, SecretProvider, TemplateEngine};
 
 /// Result of a successful installation.
+#[must_use]
 pub(crate) struct InstallResult {
     /// Number of secrets written in this generation.
     pub(crate) secrets_count: usize,
@@ -47,6 +48,7 @@ pub struct Installer<'a> {
 
 impl<'a> Installer<'a> {
     /// Create a new Installer with the given dependencies.
+    #[must_use]
     pub fn new(
         provider: &'a dyn SecretProvider,
         engine: &'a dyn TemplateEngine,

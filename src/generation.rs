@@ -9,6 +9,7 @@ use crate::traits::FileWriter;
 use crate::write::{self, Ownership};
 
 /// A created generation, with its sequence number and filesystem path.
+#[must_use]
 pub(crate) struct Generation {
     /// Monotonically increasing generation number.
     pub number: u64,

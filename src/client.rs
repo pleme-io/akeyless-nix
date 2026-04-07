@@ -11,6 +11,7 @@ pub struct AkeylessClient {
 
 impl AkeylessClient {
     /// Create a new client with the given API URL and pre-authenticated token.
+    #[must_use]
     pub fn new(api_url: &str, token: &str) -> Self {
         let mut config = akeyless_api::apis::configuration::Configuration::new();
         config.base_path = api_url.to_string();
