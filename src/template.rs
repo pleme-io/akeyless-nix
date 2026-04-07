@@ -120,6 +120,7 @@ impl TemplateEngine for IgataEngine {
 /// `/pleme/github/token` → `pleme_github_token`
 /// `/pleme/prod/db-password` → `pleme_prod_db_password`
 /// `/app.prod/token` → `app_prod_token`
+#[must_use]
 pub(crate) fn sanitize_var_name(path: &str) -> String {
     path.trim_start_matches('/')
         .replace(['/', '-', '.'], "_")
@@ -130,6 +131,7 @@ pub(crate) fn sanitize_var_name(path: &str) -> String {
 /// Must match `builtins.hashString "sha256"` in the Nix module so that
 /// placeholders generated at eval time are found by the Rust binary at
 /// activation time.
+#[must_use]
 pub(crate) fn sha256_hex(input: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

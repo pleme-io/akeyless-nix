@@ -87,6 +87,7 @@ fn default_true() -> bool {
 }
 
 /// Expand a path string, replacing `~` with the user's home directory.
+#[must_use]
 pub(crate) fn expand_path(path: &str) -> PathBuf {
     let expanded = shellexpand::tilde(path);
     PathBuf::from(expanded.as_ref())
@@ -126,14 +127,17 @@ pub(crate) fn load() -> Result<Config> {
 }
 
 impl Config {
+    #[must_use]
     pub fn access_id_path(&self) -> PathBuf {
         expand_path(&self.auth.access_id_file)
     }
 
+    #[must_use]
     pub fn access_key_path(&self) -> PathBuf {
         expand_path(&self.auth.access_key_file)
     }
 
+    #[must_use]
     pub fn cache_dir(&self) -> PathBuf {
         expand_path(&self.cache.dir)
     }
