@@ -156,10 +156,7 @@ pub(crate) fn prune(manifest: &Manifest) -> Result<()> {
         return Ok(());
     }
 
-    let mut gens: Vec<u64> = std::fs::read_dir(gd)?
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
-        .collect();
+    let mut gens = list_generation_numbers(gd)?;
     gens.sort_unstable();
 
     let keep = manifest.keep_generations as usize;
@@ -167,8 +164,7 @@ pub(crate) fn prune(manifest: &Manifest) -> Result<()> {
         return Ok(());
     }
 
-    let to_remove = &gens[..gens.len() - keep];
-    for gn in to_remove {
+    for gn in &gens[..gens.len() - keep] {
         let path = gd.join(gn.to_string());
         let _ = std::fs::remove_dir_all(&path);
     }
@@ -177,12 +173,19 @@ pub(crate) fn prune(manifest: &Manifest) -> Result<()> {
 }
 
 fn next_generation(gd: &Path) -> Result<u64> {
-    let max = std::fs::read_dir(gd)?
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+    let max = list_generation_numbers(gd)?
+        .into_iter()
         .max()
         .unwrap_or(0);
     Ok(max + 1)
+}
+
+/// Scan a directory for numeric subdirectory names, returning them as u64.
+fn list_generation_numbers(gd: &Path) -> Result<Vec<u64>> {
+    Ok(std::fs::read_dir(gd)?
+        .filter_map(std::result::Result::ok)
+        .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+        .collect())
 }
 
 /// Convert an Akeyless path to a safe filename.
