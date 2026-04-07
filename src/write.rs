@@ -299,4 +299,244 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_write_secret_invalid_mode_octal() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-badmode");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("test-secret-badmode");
+        let result = write_secret(&path, "value", "9999", true);
+        assert!(result.is_err(), "non-octal mode should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("parsing mode"),
+            "error should mention parsing: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_empty_mode_string() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-emptymode");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("test-secret-emptymode");
+        let result = write_secret(&path, "value", "", true);
+        assert!(result.is_err(), "empty mode string should fail");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_creates_nested_parent_dirs() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-nested");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("a").join("b").join("c").join("secret");
+        write_secret(&path, "deep-value", "0644", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "deep-value");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_overwrite_existing() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-overwrite");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("overwrite-secret");
+        write_secret(&path, "first", "0600", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first");
+
+        write_secret(&path, "second", "0600", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_preserves_newlines_and_special_chars() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-special");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("special-secret");
+        let value = "line1\nline2\n\ttab\0null";
+        write_secret(&path, value, "0600", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), value);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_empty_value() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-empty-val");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("empty-secret");
+        write_secret(&path, "", "0600", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_mode_0400_readonly() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-readonly");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("readonly-secret");
+        write_secret(&path, "readonly", "0400", true).unwrap();
+
+        let perms = std::fs::metadata(&path).unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o400);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_mode_0644() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-0644");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("readable-secret");
+        write_secret(&path, "readable", "0644", true).unwrap();
+
+        let perms = std::fs::metadata(&path).unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o644);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_uid_nonexistent_user() {
+        let result = resolve_uid("nonexistent_user_xyz_12345");
+        assert!(
+            result.is_err(),
+            "nonexistent user should fail"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"), "error should say not found: {err}");
+    }
+
+    #[test]
+    fn test_resolve_gid_nonexistent_group() {
+        let result = resolve_gid("nonexistent_group_xyz_12345");
+        assert!(
+            result.is_err(),
+            "nonexistent group should fail"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"), "error should say not found: {err}");
+    }
+
+    #[test]
+    fn test_resolve_uid_root() {
+        let result = resolve_uid("root");
+        assert!(result.is_ok(), "root user should exist");
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_resolve_gid_root() {
+        let result = resolve_gid("root");
+        assert!(result.is_ok(), "root group should exist");
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_set_ownership_with_uid_only() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-uid-only");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("uid-only-secret");
+        std::fs::write(&path, "test").unwrap();
+
+        let current_uid = unsafe { libc::getuid() };
+        let ownership = Ownership {
+            owner: String::new(),
+            group: String::new(),
+            uid: Some(current_uid),
+            gid: None,
+        };
+        let result = set_ownership(&path, &ownership);
+        assert!(result.is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_set_ownership_with_gid_only() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-gid-only");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("gid-only-secret");
+        std::fs::write(&path, "test").unwrap();
+
+        let current_gid = unsafe { libc::getgid() };
+        let ownership = Ownership {
+            owner: String::new(),
+            group: String::new(),
+            uid: None,
+            gid: Some(current_gid),
+        };
+        let result = set_ownership(&path, &ownership);
+        assert!(result.is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_with_owner_name_ignore_passwd_false() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-ownername");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("named-owner-secret");
+        let ownership = Ownership {
+            owner: "root".to_string(),
+            group: "root".to_string(),
+            uid: None,
+            gid: None,
+        };
+        // This will likely fail with EPERM if not running as root,
+        // but should at least resolve the names correctly
+        let result = write_secret_with_ownership(&path, "val", "0600", false, &ownership);
+        // Whether it succeeds depends on whether we run as root
+        let current_uid = unsafe { libc::getuid() };
+        if current_uid == 0 {
+            assert!(result.is_ok());
+        } else {
+            // Not root: chown to root:root should fail with permission denied
+            assert!(result.is_err());
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_fs_file_writer_symlink_replaces_existing() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-fswriter-sym-replace");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let writer = FsFileWriter;
+        let src1 = dir.join("source1");
+        let src2 = dir.join("source2");
+        let dst = dir.join("link");
+
+        std::fs::write(&src1, "first").unwrap();
+        std::fs::write(&src2, "second").unwrap();
+
+        writer.symlink(&src1, &dst).unwrap();
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "first");
+
+        writer.symlink(&src2, &dst).unwrap();
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "second");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

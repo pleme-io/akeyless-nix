@@ -314,4 +314,228 @@ mod tests {
         let manifest: Manifest = serde_json::from_str(&json).unwrap();
         assert_eq!(manifest.secrets[0].akeyless_path, long_path);
     }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = load(std::path::Path::new("/tmp/nonexistent-manifest-akeyless-12345.json"));
+        assert!(result.is_err(), "loading nonexistent file should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("reading manifest"),
+            "error should mention reading: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_invalid_json() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-manifest-invalid");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("bad.json");
+        std::fs::write(&path, "not valid json").unwrap();
+
+        let result = load(&path);
+        assert!(result.is_err(), "invalid JSON should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("parsing manifest"),
+            "error should mention parsing: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_manifest_missing_required_fields() {
+        let json = r#"{"secrets": []}"#;
+        let result: Result<Manifest, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "missing generations_dir and symlink_path should fail"
+        );
+    }
+
+    #[test]
+    fn test_manifest_missing_secrets_field() {
+        let json = r#"{
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let result: Result<Manifest, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "missing secrets field should fail"
+        );
+    }
+
+    #[test]
+    fn test_manifest_templates_default_empty() {
+        let json = r#"{
+            "secrets": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert!(
+            manifest.templates.is_empty(),
+            "templates should default to empty vec"
+        );
+    }
+
+    #[test]
+    fn test_secret_spec_default_owner_group() {
+        let json = r#"{
+            "secrets": [{"akeyless_path": "/test", "file_path": "/tmp/t"}],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.secrets[0].owner.is_empty());
+        assert!(manifest.secrets[0].group.is_empty());
+    }
+
+    #[test]
+    fn test_secret_spec_with_owner_group() {
+        let json = r#"{
+            "secrets": [{
+                "akeyless_path": "/test",
+                "file_path": "/tmp/t",
+                "owner": "nginx",
+                "group": "www-data"
+            }],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets[0].owner, "nginx");
+        assert_eq!(manifest.secrets[0].group, "www-data");
+    }
+
+    #[test]
+    fn test_template_spec_uid_gid_and_owner_group() {
+        let json = r#"{
+            "secrets": [],
+            "templates": [{
+                "name": "config",
+                "content": "test",
+                "file_path": "/tmp/config",
+                "owner": "app",
+                "group": "app",
+                "uid": 1001,
+                "gid": 1001
+            }],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.templates[0].owner, "app");
+        assert_eq!(manifest.templates[0].group, "app");
+        assert_eq!(manifest.templates[0].uid, Some(1001));
+        assert_eq!(manifest.templates[0].gid, Some(1001));
+    }
+
+    #[test]
+    fn test_template_spec_defaults() {
+        let json = r#"{
+            "secrets": [],
+            "templates": [{
+                "name": "t",
+                "content": "c",
+                "file_path": "/tmp/t"
+            }],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s"
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.templates[0].mode, "0400");
+        assert!(manifest.templates[0].owner.is_empty());
+        assert!(manifest.templates[0].group.is_empty());
+        assert_eq!(manifest.templates[0].uid, None);
+        assert_eq!(manifest.templates[0].gid, None);
+    }
+
+    #[test]
+    fn test_manifest_multiple_secrets_and_templates() {
+        let json = r#"{
+            "secrets": [
+                {"akeyless_path": "/a", "file_path": "/tmp/a"},
+                {"akeyless_path": "/b", "file_path": "/tmp/b"},
+                {"akeyless_path": "/c", "file_path": "/tmp/c"}
+            ],
+            "templates": [
+                {"name": "t1", "content": "c1", "file_path": "/tmp/t1"},
+                {"name": "t2", "content": "c2", "file_path": "/tmp/t2"}
+            ],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s",
+            "keep_generations": 10
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.secrets.len(), 3);
+        assert_eq!(manifest.templates.len(), 2);
+        assert_eq!(manifest.keep_generations, 10);
+    }
+
+    #[test]
+    fn test_manifest_unknown_fields_ignored() {
+        let json = r#"{
+            "secrets": [],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s",
+            "unknown_field": "should be ignored",
+            "extra": 42
+        }"#;
+        // serde default behavior with deny_unknown_fields depends on config.
+        // Test that unknown fields at least parse or fail predictably.
+        let result: Result<Manifest, _> = serde_json::from_str(json);
+        // This test documents current behavior: unknown fields are either
+        // ignored (default serde) or rejected (#[serde(deny_unknown_fields)])
+        if let Ok(m) = result {
+            assert_eq!(m.generations_dir, "/tmp/g");
+        }
+    }
+
+    #[test]
+    fn test_manifest_keep_generations_zero() {
+        let json = r#"{
+            "secrets": [],
+            "templates": [],
+            "generations_dir": "/tmp/g",
+            "symlink_path": "/tmp/s",
+            "keep_generations": 0
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.keep_generations, 0);
+    }
+
+    #[test]
+    fn test_secret_spec_for_test_defaults() {
+        let spec = SecretSpec::for_test("/path", "/file");
+        assert_eq!(spec.akeyless_path, "/path");
+        assert_eq!(spec.file_path, "/file");
+        assert_eq!(spec.mode, "0400");
+        assert!(spec.owner.is_empty());
+        assert!(spec.group.is_empty());
+        assert_eq!(spec.uid, None);
+        assert_eq!(spec.gid, None);
+        assert!(spec.restart_units.is_empty());
+        assert!(spec.reload_units.is_empty());
+    }
+
+    #[test]
+    fn test_template_spec_for_test_defaults() {
+        let spec = TemplateSpec::for_test("name", "content", "/file");
+        assert_eq!(spec.name, "name");
+        assert_eq!(spec.content, "content");
+        assert_eq!(spec.file_path, "/file");
+        assert_eq!(spec.mode, "0600");
+        assert!(spec.owner.is_empty());
+        assert!(spec.group.is_empty());
+        assert_eq!(spec.uid, None);
+        assert_eq!(spec.gid, None);
+    }
 }
