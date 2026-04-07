@@ -176,16 +176,12 @@ mod tests {
     }
 
     fn test_manifest(dir: &std::path::Path) -> Manifest {
-        Manifest {
-            secrets: vec![SecretSpec::for_test(
-                "/test/secret",
-                &dir.join("secret-file").to_string_lossy(),
-            )],
-            templates: vec![],
-            generations_dir: dir.join("generations").to_string_lossy().to_string(),
-            symlink_path: dir.join("current").to_string_lossy().to_string(),
-            keep_generations: 2,
-        }
+        let mut manifest = Manifest::for_test(dir);
+        manifest.secrets.push(SecretSpec::for_test(
+            "/test/secret",
+            &dir.join("secret-file").to_string_lossy(),
+        ));
+        manifest
     }
 
     #[tokio::test]
