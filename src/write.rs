@@ -34,7 +34,7 @@ pub fn write_secret(path: &Path, value: &str, mode: &str, ignore_passwd: bool) -
 ///
 /// When `ignore_passwd` is true, all owner/group operations (chown) are skipped.
 /// When uid/gid are set in ownership, they are used directly without passwd lookup.
-/// When owner/group names are set (and ignore_passwd is false), they are resolved
+/// When owner/group names are set (and `ignore_passwd` is false), they are resolved
 /// via the system passwd/group databases.
 pub fn write_secret_with_ownership(
     path: &Path,
@@ -67,34 +67,34 @@ pub fn write_secret_with_ownership(
     Ok(())
 }
 
+/// POSIX "no change" sentinel — `(uid_t)-1` / `(gid_t)-1`.
+const NO_CHANGE: libc::uid_t = libc::uid_t::MAX;
+
 /// Set file ownership using uid/gid directly, or by resolving owner/group names.
 ///
-/// - If uid is Some, use it directly; otherwise resolve from owner name
-/// - If gid is Some, use it directly; otherwise resolve from group name
-/// - Empty owner/group strings are treated as "no change" (-1 in chown)
+/// - If uid is `Some`, use it directly; otherwise resolve from owner name
+/// - If gid is `Some`, use it directly; otherwise resolve from group name
+/// - Empty owner/group strings are treated as "no change" (`NO_CHANGE` in chown)
 fn set_ownership(path: &Path, ownership: &Ownership) -> Result<()> {
     use std::ffi::CString;
 
-    // Determine the UID to set
-    let uid: i32 = if let Some(u) = ownership.uid {
-        i32::try_from(u).unwrap_or(-1)
+    let uid: libc::uid_t = if let Some(u) = ownership.uid {
+        u
     } else if ownership.owner.is_empty() {
-        -1 // no change
+        NO_CHANGE
     } else {
         resolve_uid(&ownership.owner)?
     };
 
-    // Determine the GID to set
-    let gid: i32 = if let Some(g) = ownership.gid {
-        i32::try_from(g).unwrap_or(-1)
+    let gid: libc::gid_t = if let Some(g) = ownership.gid {
+        g
     } else if ownership.group.is_empty() {
-        -1 // no change
+        NO_CHANGE
     } else {
         resolve_gid(&ownership.group)?
     };
 
-    // Skip chown if neither uid nor gid needs changing
-    if uid == -1 && gid == -1 {
+    if uid == NO_CHANGE && gid == NO_CHANGE {
         return Ok(());
     }
 
@@ -102,8 +102,8 @@ fn set_ownership(path: &Path, ownership: &Ownership) -> Result<()> {
         .with_context(|| format!("converting path {} to CString", path.display()))?;
 
     // SAFETY: c_path is a valid null-terminated string, uid/gid are valid values
-    // (-1 means "don't change"). This is a standard POSIX chown call.
-    let ret = unsafe { libc::chown(c_path.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) };
+    // (NO_CHANGE means "don't change"). This is a standard POSIX chown call.
+    let ret = unsafe { libc::chown(c_path.as_ptr(), uid, gid) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
         anyhow::bail!(
@@ -115,8 +115,8 @@ fn set_ownership(path: &Path, ownership: &Ownership) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a username to a UID via getpwnam.
-fn resolve_uid(owner: &str) -> Result<i32> {
+/// Resolve a username to a UID via `getpwnam`.
+fn resolve_uid(owner: &str) -> Result<libc::uid_t> {
     use std::ffi::CString;
 
     let c_name = CString::new(owner)
@@ -129,11 +129,11 @@ fn resolve_uid(owner: &str) -> Result<i32> {
         anyhow::bail!("user '{owner}' not found in passwd database");
     }
     // SAFETY: pw is non-null, so dereferencing is valid.
-    Ok(unsafe { (*pw).pw_uid } as i32)
+    Ok(unsafe { (*pw).pw_uid })
 }
 
-/// Resolve a group name to a GID via getgrnam.
-fn resolve_gid(group: &str) -> Result<i32> {
+/// Resolve a group name to a GID via `getgrnam`.
+fn resolve_gid(group: &str) -> Result<libc::gid_t> {
     use std::ffi::CString;
 
     let c_name = CString::new(group)
@@ -146,7 +146,7 @@ fn resolve_gid(group: &str) -> Result<i32> {
         anyhow::bail!("group '{group}' not found in group database");
     }
     // SAFETY: gr is non-null, so dereferencing is valid.
-    Ok(unsafe { (*gr).gr_gid } as i32)
+    Ok(unsafe { (*gr).gr_gid })
 }
 
 /// Concrete file-system backed [`FileWriter`] implementation.

@@ -169,10 +169,10 @@ pub fn prune(manifest: &Manifest) -> Result<()> {
     }
 
     let mut gens: Vec<u64> = std::fs::read_dir(gd)?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
         .collect();
-    gens.sort();
+    gens.sort_unstable();
 
     let keep = manifest.keep_generations as usize;
     if gens.len() <= keep {
@@ -190,7 +190,7 @@ pub fn prune(manifest: &Manifest) -> Result<()> {
 
 fn next_generation(gd: &Path) -> Result<u64> {
     let max = std::fs::read_dir(gd)?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
         .max()
         .unwrap_or(0);

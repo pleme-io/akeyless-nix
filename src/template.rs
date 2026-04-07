@@ -91,10 +91,10 @@ impl IgataEngine {
 
     /// Create with custom syntax.
     #[allow(dead_code)]
-    pub fn with_syntax(syntax: igata::Syntax) -> Result<Self> {
-        Ok(Self {
+    pub fn with_syntax(syntax: igata::Syntax) -> Self {
+        Self {
             renderer: igata::MiniJinjaRenderer::new(syntax),
-        })
+        }
     }
 }
 
@@ -123,9 +123,7 @@ impl TemplateEngine for IgataEngine {
 /// `/app.prod/token` → `app_prod_token`
 pub fn sanitize_var_name(path: &str) -> String {
     path.trim_start_matches('/')
-        .replace('/', "_")
-        .replace('-', "_")
-        .replace('.', "_")
+        .replace(['/', '-', '.'], "_")
 }
 
 /// SHA-256 hash for placeholder generation.
@@ -414,7 +412,7 @@ mod tests {
             block: ("{%".to_string(), "%}".to_string()),
             comment: ("{#".to_string(), "#}".to_string()),
         };
-        let engine = IgataEngine::with_syntax(syntax).unwrap();
+        let engine = IgataEngine::with_syntax(syntax);
         let mut secrets = BTreeMap::new();
         secrets.insert("/app/token".to_string(), "secret123".to_string());
 

@@ -15,7 +15,7 @@ pub async fn authenticate(config: &Config) -> Result<String> {
         .to_string();
 
     let mut api_config = akeyless_api::apis::configuration::Configuration::new();
-    api_config.base_path = config.api_url.clone();
+    api_config.base_path.clone_from(&config.api_url);
 
     let auth_req = akeyless_api::models::Auth {
         access_id: Some(access_id),

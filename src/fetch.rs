@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::manifest::SecretSpec;
 use crate::traits::SecretProvider;
 
-/// Fetch all secrets via a `SecretProvider`. Returns a map of akeyless_path -> value.
+/// Fetch all secrets via a `SecretProvider`. Returns a map of `akeyless_path` -> value.
 pub async fn fetch_all(
     provider: &dyn SecretProvider,
     secrets: &[SecretSpec],
