@@ -263,4 +263,48 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_fs_cache_large_secret_values() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-cache-large");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let cache = FsCache {
+            cache_dir: dir.clone(),
+        };
+
+        let mut secrets = BTreeMap::new();
+        let large_value = "x".repeat(1_000_000);
+        secrets.insert("/big".into(), large_value.clone());
+        cache.store(&secrets).unwrap();
+
+        let loaded = cache.load().unwrap().unwrap();
+        assert_eq!(loaded["/big"], large_value);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_fs_cache_special_chars_in_keys() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-cache-special-keys");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let cache = FsCache {
+            cache_dir: dir.clone(),
+        };
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/path/with spaces".into(), "val1".into());
+        secrets.insert("/path/with\"quotes".into(), "val2".into());
+        secrets.insert("/path/with\nnewline".into(), "val3".into());
+        cache.store(&secrets).unwrap();
+
+        let loaded = cache.load().unwrap().unwrap();
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded["/path/with spaces"], "val1");
+        assert_eq!(loaded["/path/with\"quotes"], "val2");
+        assert_eq!(loaded["/path/with\nnewline"], "val3");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -206,7 +206,6 @@ mod tests {
             uid: None,
             gid: None,
         };
-        // With ignore_passwd=true, this should succeed even with bogus owner/group
         write_secret_with_ownership(&path, "value", "0600", true, &ownership).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "value");
 
@@ -219,7 +218,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         let path = dir.join("test-secret-uidgid");
-        // Use current user's uid/gid so chown succeeds without root
         let current_uid = unsafe { libc::getuid() };
         let current_gid = unsafe { libc::getgid() };
         let ownership = Ownership {
@@ -241,7 +239,6 @@ mod tests {
 
         let path = dir.join("test-secret-empty-own");
         let ownership = Ownership::default();
-        // Empty owner/group with no uid/gid should skip chown entirely
         write_secret_with_ownership(&path, "value", "0600", false, &ownership).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "value");
 
@@ -275,7 +272,6 @@ mod tests {
         writer.remove_file(&path).unwrap();
         assert!(!path.exists());
 
-        // Removing a non-existent file should not error
         writer.remove_file(&path).unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -411,6 +407,26 @@ mod tests {
     }
 
     #[test]
+    fn test_write_secret_various_modes() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-modes");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let test_modes = [("0400", 0o400), ("0644", 0o644), ("0755", 0o755), ("0600", 0o600)];
+        for (mode_str, expected) in &test_modes {
+            let path = dir.join(format!("mode-{mode_str}"));
+            write_secret(&path, "val", mode_str, true).unwrap();
+            let perms = std::fs::metadata(&path).unwrap().permissions();
+            assert_eq!(
+                perms.mode() & 0o777,
+                *expected,
+                "mode {mode_str} should result in {expected:#o}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_resolve_uid_nonexistent_user() {
         let result = resolve_uid("nonexistent_user_xyz_12345");
         assert!(
@@ -502,19 +518,24 @@ mod tests {
             uid: None,
             gid: None,
         };
-        // This will likely fail with EPERM if not running as root,
-        // but should at least resolve the names correctly
         let result = write_secret_with_ownership(&path, "val", "0600", false, &ownership);
-        // Whether it succeeds depends on whether we run as root
         let current_uid = unsafe { libc::getuid() };
         if current_uid == 0 {
             assert!(result.is_ok());
         } else {
-            // Not root: chown to root:root should fail with permission denied
             assert!(result.is_err());
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_ownership_default() {
+        let ownership = Ownership::default();
+        assert!(ownership.owner.is_empty());
+        assert!(ownership.group.is_empty());
+        assert!(ownership.uid.is_none());
+        assert!(ownership.gid.is_none());
     }
 
     #[test]
@@ -536,6 +557,79 @@ mod tests {
 
         writer.symlink(&src2, &dst).unwrap();
         assert_eq!(std::fs::read_to_string(&dst).unwrap(), "second");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_fs_file_writer_create_dir_all_idempotent() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-fswriter-idempotent");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let writer = FsFileWriter;
+        writer.create_dir_all(&dir).unwrap();
+        writer.create_dir_all(&dir).unwrap();
+        assert!(dir.is_dir());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_with_ownership_uid_gid_direct() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-own-uid");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("owned-secret");
+        let current_uid = unsafe { libc::getuid() };
+        let current_gid = unsafe { libc::getgid() };
+        let ownership = Ownership {
+            owner: "should-be-ignored".to_string(),
+            group: "should-be-ignored".to_string(),
+            uid: Some(current_uid),
+            gid: Some(current_gid),
+        };
+        write_secret_with_ownership(&path, "val", "0600", false, &ownership).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "val");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_with_nonexistent_owner_fails() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-bad-owner");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("bad-owner-secret");
+        let ownership = Ownership {
+            owner: "user_that_does_not_exist_xyz_12345".to_string(),
+            group: String::new(),
+            uid: None,
+            gid: None,
+        };
+        let result = write_secret_with_ownership(&path, "val", "0600", false, &ownership);
+        assert!(result.is_err(), "nonexistent owner should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"), "error: {err}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_with_nonexistent_group_fails() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-bad-group");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("bad-group-secret");
+        let ownership = Ownership {
+            owner: String::new(),
+            group: "group_that_does_not_exist_xyz_12345".to_string(),
+            uid: None,
+            gid: None,
+        };
+        let result = write_secret_with_ownership(&path, "val", "0600", false, &ownership);
+        assert!(result.is_err(), "nonexistent group should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"), "error: {err}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
