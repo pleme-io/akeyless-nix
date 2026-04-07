@@ -633,4 +633,56 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_ownership_clone_and_debug() {
+        let ownership = Ownership {
+            owner: "root".to_string(),
+            group: "wheel".to_string(),
+            uid: Some(0),
+            gid: Some(0),
+        };
+        let cloned = ownership.clone();
+        assert_eq!(cloned.owner, "root");
+        assert_eq!(cloned.group, "wheel");
+        assert_eq!(cloned.uid, Some(0));
+        assert_eq!(cloned.gid, Some(0));
+
+        let debug = format!("{ownership:?}");
+        assert!(debug.contains("root"));
+        assert!(debug.contains("wheel"));
+    }
+
+    #[test]
+    fn test_write_secret_uid_takes_precedence_over_owner_name() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-uid-precedence");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("precedence-secret");
+        let current_uid = unsafe { libc::getuid() };
+        let current_gid = unsafe { libc::getgid() };
+        let ownership = Ownership {
+            owner: "nonexistent_user_xyz_99999".to_string(),
+            group: "nonexistent_group_xyz_99999".to_string(),
+            uid: Some(current_uid),
+            gid: Some(current_gid),
+        };
+        write_secret_with_ownership(&path, "val", "0600", false, &ownership).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "val");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_secret_large_file() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-write-large");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = dir.join("large-secret");
+        let large_value = "x".repeat(1_000_000);
+        write_secret(&path, &large_value, "0600", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), large_value);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
