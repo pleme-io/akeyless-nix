@@ -447,4 +447,185 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_sanitize_name_leading_slashes() {
+        assert_eq!(sanitize_name("///a/b"), "a-b");
+    }
+
+    #[test]
+    fn test_sanitize_name_empty() {
+        assert_eq!(sanitize_name(""), "");
+    }
+
+    #[test]
+    fn test_sanitize_name_slash_only() {
+        assert_eq!(sanitize_name("/"), "");
+    }
+
+    #[test]
+    fn test_sanitize_name_preserves_dots_and_underscores() {
+        assert_eq!(sanitize_name("/app.prod/db_pass"), "app.prod-db_pass");
+    }
+
+    #[test]
+    fn test_next_generation_empty_dir() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-nextgen-empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let number = next_generation(&dir).unwrap();
+        assert_eq!(number, 1, "first generation in empty dir should be 1");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_next_generation_skips_non_numeric_entries() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-nextgen-nonnumeric");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::create_dir_all(dir.join("5")).unwrap();
+        std::fs::create_dir_all(dir.join("not-a-number")).unwrap();
+        std::fs::create_dir_all(dir.join("abc")).unwrap();
+        std::fs::write(dir.join("file.txt"), "data").unwrap();
+
+        let number = next_generation(&dir).unwrap();
+        assert_eq!(number, 6, "should use max numeric + 1, ignoring non-numeric entries");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_prune_keeps_exactly_keep_generations() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-prune-exact");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let secrets = BTreeMap::new();
+        let templates = vec![];
+
+        for _ in 0..5 {
+            create(&manifest, &secrets, &templates, true).unwrap();
+        }
+
+        prune(&manifest).unwrap();
+
+        let remaining: Vec<u64> = std::fs::read_dir(dir.join("generations"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+            .collect();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&4));
+        assert!(remaining.contains(&5));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_prune_with_keep_one() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-prune-keepone");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 1,
+        };
+
+        let secrets = BTreeMap::new();
+        let templates = vec![];
+
+        create(&manifest, &secrets, &templates, true).unwrap();
+        create(&manifest, &secrets, &templates, true).unwrap();
+        create(&manifest, &secrets, &templates, true).unwrap();
+
+        prune(&manifest).unwrap();
+
+        let remaining: Vec<u64> = std::fs::read_dir(dir.join("generations"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<u64>().ok())
+            .collect();
+        assert_eq!(remaining.len(), 1);
+        assert!(remaining.contains(&3));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_switch_updates_symlink_on_new_generation() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-switch-update");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 5,
+        };
+
+        let secrets = BTreeMap::new();
+        let templates: Vec<RenderedTemplate> = vec![];
+
+        let g1 = create(&manifest, &secrets, &templates, true).unwrap();
+        switch(&manifest, &g1, &templates).unwrap();
+        assert_eq!(std::fs::read_link(dir.join("current")).unwrap(), g1.path);
+
+        let g2 = create(&manifest, &secrets, &templates, true).unwrap();
+        switch(&manifest, &g2, &templates).unwrap();
+        assert_eq!(
+            std::fs::read_link(dir.join("current")).unwrap(),
+            g2.path,
+            "symlink should point to newest generation after switch"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_create_with_missing_secret_in_map() {
+        use crate::manifest::SecretSpec;
+
+        let dir = std::env::temp_dir().join("akeyless-nix-test-gen-missing-secret");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            secrets: vec![SecretSpec::for_test(
+                "/missing/secret",
+                &dir.join("target").to_string_lossy(),
+            )],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let secrets = BTreeMap::new();
+        let generation = create(&manifest, &secrets, &[], true).unwrap();
+        // Secret not in map => file should NOT be written in generation dir
+        let gen_file = generation.path.join("missing-secret");
+        assert!(
+            !gen_file.exists(),
+            "secret file should not be created when value is not in the map"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

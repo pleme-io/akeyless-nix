@@ -121,4 +121,146 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_fs_cache_new_from_config() {
+        let config = Config {
+            auth: crate::config::AuthConfig::default(),
+            api_url: "https://api.akeyless.io".to_string(),
+            cache: crate::config::CacheConfig {
+                enabled: true,
+                dir: "/tmp/test-cache-new".to_string(),
+                ttl_seconds: 3600,
+            },
+        };
+        let cache = FsCache::new(&config);
+        assert_eq!(cache.cache_dir, PathBuf::from("/tmp/test-cache-new"));
+    }
+
+    #[test]
+    fn test_fs_cache_new_expands_tilde() {
+        let config = Config {
+            auth: crate::config::AuthConfig::default(),
+            api_url: "https://api.akeyless.io".to_string(),
+            cache: crate::config::CacheConfig {
+                enabled: true,
+                dir: "~/.cache/test-akeyless".to_string(),
+                ttl_seconds: 3600,
+            },
+        };
+        let cache = FsCache::new(&config);
+        assert!(
+            !cache.cache_dir.to_string_lossy().contains('~'),
+            "FsCache::new should use config.cache_dir() which expands tilde"
+        );
+    }
+
+    #[test]
+    fn test_fs_cache_store_empty_map() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-cache-empty-map");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let cache = FsCache {
+            cache_dir: dir.clone(),
+        };
+
+        let secrets = BTreeMap::new();
+        cache.store(&secrets).unwrap();
+
+        let loaded = cache.load().unwrap();
+        assert!(loaded.is_some());
+        assert!(loaded.unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_fs_cache_overwrite_existing() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-cache-overwrite");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let cache = FsCache {
+            cache_dir: dir.clone(),
+        };
+
+        let mut secrets1 = BTreeMap::new();
+        secrets1.insert("/old".into(), "old-value".into());
+        cache.store(&secrets1).unwrap();
+
+        let mut secrets2 = BTreeMap::new();
+        secrets2.insert("/new".into(), "new-value".into());
+        cache.store(&secrets2).unwrap();
+
+        let loaded = cache.load().unwrap().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(!loaded.contains_key("/old"));
+        assert_eq!(loaded["/new"], "new-value");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_fs_cache_load_corrupted_json() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-cache-corrupt");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let cache_file = dir.join("secrets.json");
+        std::fs::write(&cache_file, "not valid json {{{").unwrap();
+
+        let cache = FsCache {
+            cache_dir: dir.clone(),
+        };
+
+        let result = cache.load();
+        assert!(result.is_err(), "corrupted JSON should produce an error");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_fs_cache_store_creates_nested_dirs() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-cache-nested/a/b/c");
+        let _ = std::fs::remove_dir_all(
+            std::env::temp_dir().join("akeyless-nix-test-cache-nested"),
+        );
+
+        let cache = FsCache {
+            cache_dir: dir.clone(),
+        };
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/key".into(), "val".into());
+        cache.store(&secrets).unwrap();
+
+        let loaded = cache.load().unwrap().unwrap();
+        assert_eq!(loaded["/key"], "val");
+
+        let _ = std::fs::remove_dir_all(
+            std::env::temp_dir().join("akeyless-nix-test-cache-nested"),
+        );
+    }
+
+    #[test]
+    fn test_fs_cache_special_characters_in_values() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-cache-special");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let cache = FsCache {
+            cache_dir: dir.clone(),
+        };
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/cert".into(), "-----BEGIN RSA-----\nMIIBxTCC\n-----END RSA-----\n".into());
+        secrets.insert("/pass".into(), "p@ss$w0rd!&<>\"'\\\t\n".into());
+        secrets.insert("/unicode".into(), "こんにちは🔑".into());
+        cache.store(&secrets).unwrap();
+
+        let loaded = cache.load().unwrap().unwrap();
+        assert_eq!(loaded["/cert"], "-----BEGIN RSA-----\nMIIBxTCC\n-----END RSA-----\n");
+        assert_eq!(loaded["/pass"], "p@ss$w0rd!&<>\"'\\\t\n");
+        assert_eq!(loaded["/unicode"], "こんにちは🔑");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

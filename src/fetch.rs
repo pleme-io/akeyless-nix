@@ -96,4 +96,76 @@ mod tests {
         let result = fetch_all(&provider, &specs).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_fetch_duplicate_paths_deduplicates() {
+        let mut mock_secrets = BTreeMap::new();
+        mock_secrets.insert("/dup".into(), "dup-val".into());
+
+        let provider = MockProvider {
+            secrets: mock_secrets,
+        };
+        let specs = vec![
+            SecretSpec::for_test("/dup", "/tmp/a"),
+            SecretSpec::for_test("/dup", "/tmp/b"),
+        ];
+
+        let result = fetch_all(&provider, &specs).await.unwrap();
+        // BTreeMap deduplicates by key, so only 1 entry
+        assert_eq!(result.len(), 1);
+        assert_eq!(result["/dup"], "dup-val");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_error_message_contains_path() {
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let specs = vec![SecretSpec::for_test("/specific/path/for/test", "/tmp/x")];
+
+        let result = fetch_all(&provider, &specs).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("/specific/path/for/test"),
+            "error should contain the missing path: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_preserves_special_characters_in_values() {
+        let mut mock_secrets = BTreeMap::new();
+        mock_secrets.insert(
+            "/cert".into(),
+            "-----BEGIN CERT-----\ndata\n-----END CERT-----\n".into(),
+        );
+        mock_secrets.insert("/pass".into(), "p@$$w0rd\t\n".into());
+
+        let provider = MockProvider {
+            secrets: mock_secrets,
+        };
+        let specs = vec![
+            SecretSpec::for_test("/cert", "/tmp/cert"),
+            SecretSpec::for_test("/pass", "/tmp/pass"),
+        ];
+
+        let result = fetch_all(&provider, &specs).await.unwrap();
+        assert!(result["/cert"].contains("BEGIN CERT"));
+        assert!(result["/pass"].contains("p@$$w0rd"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_single_secret() {
+        let mut mock_secrets = BTreeMap::new();
+        mock_secrets.insert("/only".into(), "solo".into());
+
+        let provider = MockProvider {
+            secrets: mock_secrets,
+        };
+        let specs = vec![SecretSpec::for_test("/only", "/tmp/only")];
+
+        let result = fetch_all(&provider, &specs).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result["/only"], "solo");
+    }
 }
