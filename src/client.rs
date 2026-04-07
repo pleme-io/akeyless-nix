@@ -36,7 +36,7 @@ impl AkeylessClient {
         // Response is { "/path/to/secret": "value" }
         response[path]
             .as_str()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .ok_or_else(|| anyhow::anyhow!("secret {path} not found in response"))
     }
 }

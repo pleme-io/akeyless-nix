@@ -42,7 +42,7 @@ pub trait CacheStore: Send + Sync {
 /// - `PlaceholderEngine`: hash-based `<AKEYLESS:hash:PLACEHOLDER>` substitution (legacy)
 /// - `IgataEngine`: MiniJinja-backed rendering with `[= var =]` syntax (via igata)
 ///
-/// The `secrets` map is keyed by akeyless_path (e.g., `/pleme/github/token`).
+/// The `secrets` map is keyed by `akeyless_path` (e.g., `/pleme/github/token`).
 /// Each implementation decides how to map these paths to template variables.
 pub trait TemplateEngine: Send + Sync {
     /// Render a template string, substituting secret values.

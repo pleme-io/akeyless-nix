@@ -1,6 +1,6 @@
 //! Installer service — orchestrates the full secret installation flow.
 //!
-//! Composes all trait objects (SecretProvider, TemplateEngine, CacheStore) into
+//! Composes all trait objects (`SecretProvider`, `TemplateEngine`, `CacheStore`) into
 //! a single entry point. This is the core architecture: everything flows
 //! through the Installer, which delegates to traits at every I/O boundary.
 //!
@@ -104,13 +104,13 @@ impl<'a> Installer<'a> {
             Ok(secrets) => Ok(secrets),
             Err(e) => {
                 // Try cache fallback
-                if let Some(cache) = self.cache {
-                    if let Ok(Some(cached)) = cache.load() {
-                        eprintln!(
-                            "akeyless-nix: WARNING — API fetch failed ({e}), using cached secrets"
-                        );
-                        return Ok(cached);
-                    }
+                if let Some(cache) = self.cache
+                    && let Ok(Some(cached)) = cache.load()
+                {
+                    eprintln!(
+                        "akeyless-nix: WARNING — API fetch failed ({e}), using cached secrets"
+                    );
+                    return Ok(cached);
                 }
                 Err(e)
             }
