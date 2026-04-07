@@ -37,6 +37,27 @@ enum TemplateEngineKind {
     Igata,
 }
 
+impl std::fmt::Display for TemplateEngineKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Placeholder => f.write_str("placeholder"),
+            Self::Igata => f.write_str("igata"),
+        }
+    }
+}
+
+impl std::str::FromStr for TemplateEngineKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "placeholder" => Ok(Self::Placeholder),
+            "igata" => Ok(Self::Igata),
+            other => Err(format!("unknown template engine: {other}")),
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Fetch secrets and install them to their target paths
@@ -265,6 +286,45 @@ mod cli_tests {
     }
 }
 
+#[cfg(test)]
+mod template_engine_kind_tests {
+    use super::TemplateEngineKind;
+    use std::str::FromStr;
+
+    #[test]
+    fn display_placeholder() {
+        assert_eq!(TemplateEngineKind::Placeholder.to_string(), "placeholder");
+    }
+
+    #[test]
+    fn display_igata() {
+        assert_eq!(TemplateEngineKind::Igata.to_string(), "igata");
+    }
+
+    #[test]
+    fn from_str_roundtrip() {
+        let variants = [TemplateEngineKind::Placeholder, TemplateEngineKind::Igata];
+        for v in &variants {
+            let s = v.to_string();
+            let parsed = TemplateEngineKind::from_str(&s).unwrap();
+            assert_eq!(parsed.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn from_str_unknown() {
+        assert!(TemplateEngineKind::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn default_is_placeholder() {
+        assert_eq!(
+            TemplateEngineKind::default().to_string(),
+            "placeholder"
+        );
+    }
+}
+
 /// End-to-end integration tests that exercise the full install flow
 /// using mock providers and a temporary filesystem.
 #[cfg(test)]
@@ -471,7 +531,7 @@ mod integration_tests {
 
         let secrets = fetch::fetch_all(&provider, &manifest.secrets).await.unwrap();
 
-        let cache = InMemoryCache::new();
+        let cache = MockCache::empty();
         cache.store(&secrets).unwrap();
 
         let loaded = cache.load().unwrap().unwrap();

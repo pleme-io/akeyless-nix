@@ -819,7 +819,7 @@ mod tests {
         let installer = Installer::new(&provider, &engine, Some(&cache));
         let manifest = test_manifest(&dir);
 
-        installer.install(&manifest, true).await.unwrap();
+        let _ = installer.install(&manifest, true).await.unwrap();
 
         let cached = cache.load().unwrap().unwrap();
         assert_eq!(cached.len(), 1);
