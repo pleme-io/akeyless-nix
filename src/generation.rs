@@ -112,49 +112,31 @@ pub(crate) fn switch_with_writer(
     rendered_templates: &[RenderedTemplate],
     writer: &dyn FileWriter,
 ) -> Result<()> {
-    let symlink = Path::new(&manifest.symlink_path);
-
-    // Create symlinks from declared file_path -> generation file
     for spec in &manifest.secrets {
-        let gf = genr.path.join(sanitize_name(&spec.akeyless_path));
-        let target = Path::new(&spec.file_path);
-
-        if let Some(parent) = target.parent() {
-            writer.create_dir_all(parent)?;
-        }
-
-        // Remove old symlink/file if it exists
-        writer.remove_file(target)?;
-        writer
-            .symlink(&gf, target)
-            .with_context(|| format!("symlinking {} -> {}", target.display(), gf.display()))?;
+        let source = genr.path.join(sanitize_name(&spec.akeyless_path));
+        ensure_symlink(writer, &source, Path::new(&spec.file_path))?;
     }
 
-    // Create symlinks for rendered templates using file_path from RenderedTemplate
     for tmpl in rendered_templates {
-        let gf = genr.path.join("rendered").join(&tmpl.name);
-        let target = Path::new(&tmpl.file_path);
-
-        if let Some(parent) = target.parent() {
-            writer.create_dir_all(parent)?;
-        }
-
-        writer.remove_file(target)?;
-        writer
-            .symlink(&gf, target)
-            .with_context(|| format!("symlinking {} -> {}", target.display(), gf.display()))?;
+        let source = genr.path.join("rendered").join(&tmpl.name);
+        ensure_symlink(writer, &source, Path::new(&tmpl.file_path))?;
     }
 
-    // Update the main symlink
-    if let Some(parent) = symlink.parent() {
-        writer.create_dir_all(parent)?;
-    }
-    writer.remove_file(symlink)?;
-    writer
-        .symlink(&genr.path, symlink)
-        .with_context(|| format!("switching generation symlink to {}", genr.path.display()))?;
+    ensure_symlink(writer, &genr.path, Path::new(&manifest.symlink_path))?;
 
     Ok(())
+}
+
+/// Create a symlink from `source` to `target`, ensuring parent dirs exist
+/// and removing any previous file at `target`.
+fn ensure_symlink(writer: &dyn FileWriter, source: &Path, target: &Path) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        writer.create_dir_all(parent)?;
+    }
+    writer.remove_file(target)?;
+    writer
+        .symlink(source, target)
+        .with_context(|| format!("symlinking {} -> {}", target.display(), source.display()))
 }
 
 /// Remove old generations beyond the keep limit.
