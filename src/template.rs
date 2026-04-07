@@ -655,4 +655,90 @@ mod tests {
         let h = sha256_hex("anything");
         assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
     }
+
+    // ── IgataEngine malformed template ────────────────────────────────
+
+    #[test]
+    fn igata_malformed_block_returns_error() {
+        let engine = IgataEngine::new();
+        let result = engine.render("[% if %]", &BTreeMap::new());
+        assert!(result.is_err(), "malformed block should return error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("igata template error"),
+            "error should mention igata: {err}"
+        );
+    }
+
+    #[test]
+    fn igata_multiline_template() {
+        let engine = IgataEngine::new();
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/db/host".to_string(), "localhost".to_string());
+        secrets.insert("/db/port".to_string(), "5432".to_string());
+
+        let template = "host=[= db_host =]\nport=[= db_port =]";
+        let result = engine.render(template, &secrets).unwrap();
+        assert_eq!(result, "host=localhost\nport=5432");
+    }
+
+    // ── Placeholder with igata syntax (no cross-contamination) ────────
+
+    #[test]
+    fn placeholder_ignores_igata_syntax() {
+        let engine = PlaceholderEngine;
+        let secrets = BTreeMap::new();
+        let content = "val=[= some_var =]";
+        let result = engine.render(content, &secrets).unwrap();
+        assert_eq!(result, content, "PlaceholderEngine should not touch igata syntax");
+    }
+
+    #[test]
+    fn igata_ignores_akeyless_placeholder_syntax() {
+        let engine = IgataEngine::new();
+        let secrets = BTreeMap::new();
+        let content = "token: <AKEYLESS:abc123:PLACEHOLDER>";
+        let result = engine.render(content, &secrets).unwrap();
+        assert_eq!(result, content, "IgataEngine should not touch placeholder syntax");
+    }
+
+    // ── sanitize_var_name realistic paths ─────────────────────────────
+
+    #[test]
+    fn sanitize_realistic_akeyless_paths() {
+        assert_eq!(sanitize_var_name("/pleme/prod/db-password"), "pleme_prod_db_password");
+        assert_eq!(sanitize_var_name("/org/team/service-v2.1/api-key"), "org_team_service_v2_1_api_key");
+        assert_eq!(sanitize_var_name("/ci-cd/github/token"), "ci_cd_github_token");
+    }
+
+    // ── render_all stops on first error ───────────────────────────────
+
+    #[test]
+    fn render_all_stops_on_first_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct CountingFailEngine {
+            count: Arc<AtomicUsize>,
+        }
+        impl TemplateEngine for CountingFailEngine {
+            fn render(&self, _: &str, _: &BTreeMap<String, String>) -> Result<String> {
+                self.count.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("fail")
+            }
+        }
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let engine = CountingFailEngine {
+            count: counter.clone(),
+        };
+        let templates = vec![
+            TemplateSpec::for_test("a", "aa", "/tmp/a"),
+            TemplateSpec::for_test("b", "bb", "/tmp/b"),
+            TemplateSpec::for_test("c", "cc", "/tmp/c"),
+        ];
+        let result = render_all(&engine, &templates, &BTreeMap::new());
+        assert!(result.is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "should stop on first error");
+    }
 }

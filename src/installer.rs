@@ -775,4 +775,96 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn test_check_returns_paths_in_manifest_order() {
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/z".into(), "vz".into());
+        secrets.insert("/a".into(), "va".into());
+
+        let provider = MockProvider { secrets };
+        let engine = PlaceholderEngine;
+        let installer = Installer::new(&provider, &engine, None);
+
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec::for_test("/z", "/tmp/z"),
+                SecretSpec::for_test("/a", "/tmp/a"),
+                SecretSpec::for_test("/missing", "/tmp/m"),
+            ],
+            templates: vec![],
+            generations_dir: "/tmp/g".into(),
+            symlink_path: "/tmp/s".into(),
+            keep_generations: 2,
+        };
+
+        let results = installer.check(&manifest).await.unwrap();
+        assert_eq!(results[0].0, "/z");
+        assert!(results[0].1);
+        assert_eq!(results[1].0, "/a");
+        assert!(results[1].1);
+        assert_eq!(results[2].0, "/missing");
+        assert!(!results[2].1);
+    }
+
+    #[tokio::test]
+    async fn test_install_with_igata_template_multiline() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-igata-multi");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/app/host".into(), "example.com".into());
+        secrets.insert("/app/port".into(), "8080".into());
+
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec::for_test("/app/host", &dir.join("host").to_string_lossy()),
+                SecretSpec::for_test("/app/port", &dir.join("port").to_string_lossy()),
+            ],
+            templates: vec![TemplateSpec::for_test(
+                "config",
+                "host=[= app_host =]\nport=[= app_port =]",
+                &dir.join("config").to_string_lossy(),
+            )],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let provider = MockProvider { secrets };
+        let engine = IgataEngine::new();
+        let installer = Installer::new(&provider, &engine, None);
+
+        let result = installer.install(&manifest, true).await.unwrap();
+        assert_eq!(result.secrets_count, 2);
+        assert_eq!(result.templates_count, 1);
+
+        let rendered = std::fs::read_to_string(dir.join("config")).unwrap();
+        assert_eq!(rendered, "host=example.com\nport=8080");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_cache_is_updated_after_successful_fetch() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-installer-cache-update");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut secrets = BTreeMap::new();
+        secrets.insert("/test/secret".into(), "fresh-value".into());
+
+        let provider = MockProvider { secrets };
+        let engine = PlaceholderEngine;
+        let cache = MockCache::empty();
+        let installer = Installer::new(&provider, &engine, Some(&cache));
+        let manifest = test_manifest(&dir);
+
+        installer.install(&manifest, true).await.unwrap();
+
+        let cached = cache.load().unwrap().unwrap();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached["/test/secret"], "fresh-value");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
