@@ -54,18 +54,12 @@ pub(crate) fn create_with_writer(
     for spec in &manifest.secrets {
         if let Some(value) = secrets.get(&spec.akeyless_path) {
             let target = gp.join(sanitize_name(&spec.akeyless_path));
-            let ownership = Ownership {
-                owner: spec.owner.clone(),
-                group: spec.group.clone(),
-                uid: spec.uid,
-                gid: spec.gid,
-            };
             write::write_secret_with_ownership(
                 &target,
                 value,
                 &spec.mode,
                 ignore_passwd,
-                &ownership,
+                &Ownership::from(spec),
             )?;
         }
     }
@@ -75,18 +69,12 @@ pub(crate) fn create_with_writer(
     writer.create_dir_all(&tmpl_dir)?;
     for tmpl in templates {
         let target = tmpl_dir.join(&tmpl.name);
-        let ownership = Ownership {
-            owner: tmpl.owner.clone(),
-            group: tmpl.group.clone(),
-            uid: tmpl.uid,
-            gid: tmpl.gid,
-        };
         write::write_secret_with_ownership(
             &target,
             &tmpl.content,
             &tmpl.mode,
             ignore_passwd,
-            &ownership,
+            &Ownership::from(tmpl),
         )?;
     }
 

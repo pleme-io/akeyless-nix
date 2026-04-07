@@ -19,6 +19,39 @@ pub struct Ownership {
     pub gid: Option<u32>,
 }
 
+impl From<&crate::manifest::SecretSpec> for Ownership {
+    fn from(spec: &crate::manifest::SecretSpec) -> Self {
+        Self {
+            owner: spec.owner.clone(),
+            group: spec.group.clone(),
+            uid: spec.uid,
+            gid: spec.gid,
+        }
+    }
+}
+
+impl From<&crate::manifest::TemplateSpec> for Ownership {
+    fn from(spec: &crate::manifest::TemplateSpec) -> Self {
+        Self {
+            owner: spec.owner.clone(),
+            group: spec.group.clone(),
+            uid: spec.uid,
+            gid: spec.gid,
+        }
+    }
+}
+
+impl From<&crate::template::RenderedTemplate> for Ownership {
+    fn from(tmpl: &crate::template::RenderedTemplate) -> Self {
+        Self {
+            owner: tmpl.owner.clone(),
+            group: tmpl.group.clone(),
+            uid: tmpl.uid,
+            gid: tmpl.gid,
+        }
+    }
+}
+
 /// Write a secret value to a file with the specified permissions.
 ///
 /// Convenience wrapper around [`write_secret_with_ownership`] with default
@@ -536,6 +569,67 @@ mod tests {
         assert!(ownership.group.is_empty());
         assert!(ownership.uid.is_none());
         assert!(ownership.gid.is_none());
+    }
+
+    #[test]
+    fn test_ownership_from_secret_spec() {
+        use crate::manifest::SecretSpec;
+        let spec = SecretSpec {
+            akeyless_path: "/test".into(),
+            file_path: "/tmp/test".into(),
+            mode: "0600".into(),
+            owner: "nginx".into(),
+            group: "www-data".into(),
+            uid: Some(1000),
+            gid: Some(100),
+            restart_units: vec![],
+            reload_units: vec![],
+        };
+        let ownership = Ownership::from(&spec);
+        assert_eq!(ownership.owner, "nginx");
+        assert_eq!(ownership.group, "www-data");
+        assert_eq!(ownership.uid, Some(1000));
+        assert_eq!(ownership.gid, Some(100));
+    }
+
+    #[test]
+    fn test_ownership_from_template_spec() {
+        use crate::manifest::TemplateSpec;
+        let spec = TemplateSpec {
+            name: "config".into(),
+            content: "data".into(),
+            file_path: "/tmp/config".into(),
+            mode: "0644".into(),
+            owner: "app".into(),
+            group: "app".into(),
+            uid: Some(500),
+            gid: Some(500),
+        };
+        let ownership = Ownership::from(&spec);
+        assert_eq!(ownership.owner, "app");
+        assert_eq!(ownership.group, "app");
+        assert_eq!(ownership.uid, Some(500));
+        assert_eq!(ownership.gid, Some(500));
+    }
+
+    #[test]
+    fn test_ownership_from_rendered_template() {
+        use crate::template::RenderedTemplate;
+        let tmpl = RenderedTemplate {
+            name: "config".into(),
+            content: "rendered".into(),
+            file_path: "/tmp/config".into(),
+            mode: "0600".into(),
+            owner: "root".into(),
+            group: "wheel".into(),
+            uid: Some(0),
+            gid: Some(0),
+        };
+        let ownership = Ownership::from(&tmpl);
+        assert_eq!(ownership.owner, "root");
+        assert_eq!(ownership.group, "wheel");
+        assert_eq!(ownership.uid, Some(0));
+        assert_eq!(ownership.gid, Some(0));
     }
 
     #[test]
