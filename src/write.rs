@@ -36,7 +36,7 @@ pub fn write_secret(path: &Path, value: &str, mode: &str, ignore_passwd: bool) -
 /// When uid/gid are set in ownership, they are used directly without passwd lookup.
 /// When owner/group names are set (and `ignore_passwd` is false), they are resolved
 /// via the system passwd/group databases.
-pub fn write_secret_with_ownership(
+pub(crate) fn write_secret_with_ownership(
     path: &Path,
     value: &str,
     mode: &str,
