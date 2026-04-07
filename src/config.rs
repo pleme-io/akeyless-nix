@@ -418,4 +418,77 @@ cache:
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_config_env_override_via_provider_chain() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-config-env-chain");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let yaml_path = dir.join("config.yaml");
+        std::fs::write(&yaml_path, "api_url: https://file.example.com\n").unwrap();
+
+        unsafe {
+            std::env::set_var("AKEYLESS_NIX_API_URL", "https://env.example.com");
+        }
+
+        let config: Config = ProviderChain::new()
+            .with_defaults(&Config::default())
+            .with_file(&yaml_path)
+            .with_env("AKEYLESS_NIX_")
+            .extract()
+            .unwrap();
+
+        assert_eq!(
+            config.api_url, "https://env.example.com",
+            "env var should override file value"
+        );
+
+        unsafe {
+            std::env::remove_var("AKEYLESS_NIX_API_URL");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_file_overrides_defaults() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-config-file-over-defaults");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let yaml = r#"
+auth:
+  access_id_file: /custom/id
+  access_key_file: /custom/key
+api_url: https://custom.api
+cache:
+  enabled: false
+  dir: /custom/cache
+  ttl_seconds: 100
+"#;
+        let yaml_path = dir.join("full.yaml");
+        std::fs::write(&yaml_path, yaml).unwrap();
+
+        let config: Config = ProviderChain::new()
+            .with_defaults(&Config::default())
+            .with_file(&yaml_path)
+            .extract()
+            .unwrap();
+
+        assert_eq!(config.auth.access_id_file, "/custom/id");
+        assert_eq!(config.auth.access_key_file, "/custom/key");
+        assert_eq!(config.api_url, "https://custom.api");
+        assert!(!config.cache.enabled);
+        assert_eq!(config.cache.dir, "/custom/cache");
+        assert_eq!(config.cache.ttl_seconds, 100);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_expand_path_tilde_with_subpath() {
+        let path = expand_path("~/sub/dir/file.txt");
+        assert!(!path.to_string_lossy().contains('~'));
+        assert!(path.to_string_lossy().ends_with("sub/dir/file.txt"));
+    }
 }

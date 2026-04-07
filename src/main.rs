@@ -135,6 +135,137 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parse_install_subcommand() {
+        let cli = Cli::try_parse_from([
+            "akeyless-install-secrets",
+            "install",
+            "/path/to/manifest.json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Install {
+                manifest,
+                ignore_passwd,
+                template_engine,
+            } => {
+                assert_eq!(manifest, PathBuf::from("/path/to/manifest.json"));
+                assert!(!ignore_passwd);
+                assert!(matches!(template_engine, TemplateEngineKind::Placeholder));
+            }
+            _ => panic!("expected Install command"),
+        }
+    }
+
+    #[test]
+    fn parse_install_with_ignore_passwd() {
+        let cli = Cli::try_parse_from([
+            "akeyless-install-secrets",
+            "install",
+            "--ignore-passwd",
+            "/manifest.json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Install { ignore_passwd, .. } => assert!(ignore_passwd),
+            _ => panic!("expected Install command"),
+        }
+    }
+
+    #[test]
+    fn parse_install_with_igata_engine() {
+        let cli = Cli::try_parse_from([
+            "akeyless-install-secrets",
+            "install",
+            "--template-engine",
+            "igata",
+            "/manifest.json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Install {
+                template_engine, ..
+            } => assert!(matches!(template_engine, TemplateEngineKind::Igata)),
+            _ => panic!("expected Install command"),
+        }
+    }
+
+    #[test]
+    fn parse_check_subcommand() {
+        let cli = Cli::try_parse_from([
+            "akeyless-install-secrets",
+            "check",
+            "/manifest.json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Check { manifest } => {
+                assert_eq!(manifest, PathBuf::from("/manifest.json"));
+            }
+            _ => panic!("expected Check command"),
+        }
+    }
+
+    #[test]
+    fn parse_validate_subcommand() {
+        let cli = Cli::try_parse_from([
+            "akeyless-install-secrets",
+            "validate",
+            "/manifest.json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Validate { manifest } => {
+                assert_eq!(manifest, PathBuf::from("/manifest.json"));
+            }
+            _ => panic!("expected Validate command"),
+        }
+    }
+
+    #[test]
+    fn parse_no_subcommand_fails() {
+        let result = Cli::try_parse_from(["akeyless-install-secrets"]);
+        assert!(result.is_err(), "missing subcommand should fail");
+    }
+
+    #[test]
+    fn parse_unknown_subcommand_fails() {
+        let result = Cli::try_parse_from(["akeyless-install-secrets", "unknown"]);
+        assert!(result.is_err(), "unknown subcommand should fail");
+    }
+
+    #[test]
+    fn parse_install_missing_manifest_fails() {
+        let result = Cli::try_parse_from(["akeyless-install-secrets", "install"]);
+        assert!(result.is_err(), "install without manifest should fail");
+    }
+
+    #[test]
+    fn parse_install_invalid_engine_fails() {
+        let result = Cli::try_parse_from([
+            "akeyless-install-secrets",
+            "install",
+            "--template-engine",
+            "jinja2",
+            "/manifest.json",
+        ]);
+        assert!(result.is_err(), "invalid template engine should fail");
+    }
+
+    #[test]
+    fn template_engine_kind_default_is_placeholder() {
+        assert!(matches!(
+            TemplateEngineKind::default(),
+            TemplateEngineKind::Placeholder
+        ));
+    }
+}
+
 /// End-to-end integration tests that exercise the full install flow
 /// using mock providers and a temporary filesystem.
 #[cfg(test)]
@@ -285,7 +416,6 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_install_flow_with_fetch_failure() {
-        // Verify that a missing secret causes the entire flow to fail early
         let provider = MockProvider {
             secrets: BTreeMap::new(),
         };
@@ -295,5 +425,143 @@ mod integration_tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("not found"), "error should mention 'not found': {err_msg}");
+    }
+
+    #[tokio::test]
+    async fn test_full_install_flow_with_igata_engine() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-e2e-igata");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut mock_secrets = BTreeMap::new();
+        mock_secrets.insert("/pleme/db-host".into(), "db.example.com".into());
+        mock_secrets.insert("/pleme/db-pass".into(), "s3cret".into());
+
+        let provider = MockProvider {
+            secrets: mock_secrets,
+        };
+
+        let tmpl_target = dir.join("secrets").join("db-config");
+        let manifest = Manifest {
+            secrets: vec![
+                SecretSpec::for_test(
+                    "/pleme/db-host",
+                    &dir.join("secrets").join("db-host").to_string_lossy(),
+                ),
+                SecretSpec::for_test(
+                    "/pleme/db-pass",
+                    &dir.join("secrets").join("db-pass").to_string_lossy(),
+                ),
+            ],
+            templates: vec![TemplateSpec::for_test(
+                "db-config",
+                "host=[= pleme_db_host =]\npass=[= pleme_db_pass =]",
+                &tmpl_target.to_string_lossy(),
+            )],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let secrets = fetch::fetch_all(&provider, &manifest.secrets).await.unwrap();
+        assert_eq!(secrets.len(), 2);
+
+        let engine = template::IgataEngine::new();
+        let rendered = template::render_all(&engine, &manifest.templates, &secrets).unwrap();
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(rendered[0].content, "host=db.example.com\npass=s3cret");
+
+        let writer = FsFileWriter;
+        let generation_info =
+            generation::create_with_writer(&manifest, &secrets, &rendered, true, &writer).unwrap();
+        generation::switch_with_writer(&manifest, &generation_info, &rendered, &writer).unwrap();
+
+        assert!(tmpl_target.is_symlink());
+        let content = std::fs::read_to_string(&tmpl_target).unwrap();
+        assert_eq!(content, "host=db.example.com\npass=s3cret");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_install_flow_with_cache_roundtrip() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-e2e-cache");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut mock_secrets = BTreeMap::new();
+        mock_secrets.insert("/app/token".into(), "tok-abc".into());
+
+        let provider = MockProvider {
+            secrets: mock_secrets,
+        };
+
+        let manifest = Manifest {
+            secrets: vec![SecretSpec::for_test(
+                "/app/token",
+                &dir.join("token").to_string_lossy(),
+            )],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let secrets = fetch::fetch_all(&provider, &manifest.secrets).await.unwrap();
+
+        let cache = InMemoryCache::new();
+        cache.store(&secrets).unwrap();
+
+        let loaded = cache.load().unwrap().unwrap();
+        assert_eq!(loaded["/app/token"], "tok-abc");
+
+        let empty_provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+        let result = fetch::fetch_all(&empty_provider, &manifest.secrets).await;
+        assert!(result.is_err(), "empty provider should fail");
+
+        let fallback = cache.load().unwrap().unwrap();
+        assert_eq!(fallback["/app/token"], "tok-abc", "cache still has data");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_empty_manifest_creates_valid_generation() {
+        let dir = std::env::temp_dir().join("akeyless-nix-test-e2e-empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let provider = MockProvider {
+            secrets: BTreeMap::new(),
+        };
+
+        let manifest = Manifest {
+            secrets: vec![],
+            templates: vec![],
+            generations_dir: dir.join("generations").to_string_lossy().to_string(),
+            symlink_path: dir.join("current").to_string_lossy().to_string(),
+            keep_generations: 2,
+        };
+
+        let secrets = fetch::fetch_all(&provider, &manifest.secrets).await.unwrap();
+        assert!(secrets.is_empty());
+
+        let engine = template::PlaceholderEngine;
+        let rendered = template::render_all(&engine, &manifest.templates, &secrets).unwrap();
+        assert!(rendered.is_empty());
+
+        let writer = FsFileWriter;
+        let generation_info =
+            generation::create_with_writer(&manifest, &secrets, &rendered, true, &writer).unwrap();
+        assert_eq!(generation_info.number, 1);
+
+        generation::switch_with_writer(&manifest, &generation_info, &rendered, &writer).unwrap();
+        let current = dir.join("current");
+        assert!(current.is_symlink());
+        assert_eq!(std::fs::read_link(&current).unwrap(), generation_info.path);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
