@@ -1,5 +1,8 @@
 # akeyless-nix
 
+> **★★★ CSE / Knowable Construction.** This repo operates under **Constructive Substrate Engineering** — canonical specification at [`pleme-io/theory/CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md`](https://github.com/pleme-io/theory/blob/main/CONSTRUCTIVE-SUBSTRATE-ENGINEERING.md). The Compounding Directive (operational rules: solve once, load-bearing fixes only, idiom-first, models stay current, direction beats velocity) is in the org-level pleme-io/CLAUDE.md ★★★ section. Read both before non-trivial changes.
+
+
 Drop-in replacement for `sops-nix` that fetches secrets from Akeyless instead of
 decrypting a git-committed SOPS file. Secrets are pulled via the Akeyless API at
 activation time and written to files with proper permissions -- identical interface
