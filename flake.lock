@@ -84141,11 +84141,11 @@
         "nixpkgs": "nixpkgs_209"
       },
       "locked": {
-        "lastModified": 1780120029,
-        "narHash": "sha256-rKYdXhY0t+b+JHS6cFWu854HZnK0vCq2yWIeJ1Bbdi0=",
+        "lastModified": 1780136495,
+        "narHash": "sha256-oDqX8236+LI0OZR5FWcHkOrqflDSrNReqWCIP1ytDd0=",
         "owner": "pleme-io",
         "repo": "substrate",
-        "rev": "a04f400f73df3ef0a18d53d1c5b08d47e661cce7",
+        "rev": "9158bdf5cd4bf13f89bbefaddef5a87d7522695e",
         "type": "github"
       },
       "original": {
