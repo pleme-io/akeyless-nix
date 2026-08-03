@@ -23,22 +23,19 @@ impl FsCache {
 
 impl CacheStore for FsCache {
     fn store(&self, secrets: &BTreeMap<String, String>) -> Result<()> {
-        std::fs::create_dir_all(&self.cache_dir)
+        // 0700 on the directory, not just 0600 on the file: a 0600 file inside
+        // a 0755 directory still leaks which secret paths we hold, because the
+        // names are enumerable even when the contents are not.
+        cofre_fs::create_secret_dir(&self.cache_dir, 0o700)
             .with_context(|| format!("creating cache dir {}", self.cache_dir.display()))?;
 
         let cache_file = self.cache_dir.join("secrets.json");
         let content = serde_json::to_string_pretty(secrets)
             .context("serializing secrets for cache")?;
 
-        std::fs::write(&cache_file, content)
+        // Created at 0600 by open(2) rather than chmod'ed afterwards.
+        cofre_fs::write_secret(&cache_file, content.as_bytes(), 0o600)
             .with_context(|| format!("writing cache {}", cache_file.display()))?;
-
-        // Restrict permissions
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&cache_file, std::fs::Permissions::from_mode(0o600))?;
-        }
 
         Ok(())
     }

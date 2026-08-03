@@ -1,4 +1,3 @@
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -82,15 +81,15 @@ pub(crate) fn write_secret_with_ownership(
             .with_context(|| format!("creating parent dirs for {}", path.display()))?;
     }
 
-    // Write content
-    std::fs::write(path, value)
-        .with_context(|| format!("writing {}", path.display()))?;
-
-    // Set permissions
+    // Parse the mode before writing: cofre_fs::write_secret needs it at
+    // open(2), so the file never exists at a laxer mode than requested.
+    // A malformed mode string now fails before any bytes hit the disk.
     let mode_int = u32::from_str_radix(mode, 8)
         .with_context(|| format!("parsing mode '{mode}' as octal"))?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode_int))
-        .with_context(|| format!("setting permissions on {}", path.display()))?;
+
+    // Write content at its final mode.
+    cofre_fs::write_secret(path, value.as_bytes(), mode_int)
+        .with_context(|| format!("writing {}", path.display()))?;
 
     // Set ownership (chown) unless ignore_passwd is set
     if !ignore_passwd {
