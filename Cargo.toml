@@ -17,6 +17,10 @@ name = "akeyless-install-secrets"
 path = "src/main.rs"
 
 [dependencies]
+# Credential files created at their final mode by open(2) rather than
+# chmod'ed after the fact — closes the interval in which an activation-time
+# secret is readable by anyone but its owner.
+cofre-fs = { git = "https://github.com/pleme-io/cofre" }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
