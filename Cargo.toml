@@ -20,16 +20,24 @@ path = "src/main.rs"
 # Credential files created at their final mode by open(2) rather than
 # chmod'ed after the fact — closes the interval in which an activation-time
 # secret is readable by anyone but its owner.
-cofre-fs = { git = "https://github.com/pleme-io/cofre" }
+cofre-fs = "0.1.4"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.40", features = ["full"] }
-akeyless-api = { git = "https://github.com/pleme-io/akeyless-api", features = ["rustls-tls"] }
+akeyless-api = { version = "0.1.1", features = ["rustls-tls"] }
+# The crate is `pleme-igata` on crates.io — the repo name and the crate name
+# differ, which is exactly the kind of mismatch that makes a registry lookup
+# report "does not exist" and get misread as unpublished.
+# STILL GIT: pleme-igata is not on the registry yet. Its manifest was
+# structurally unpublishable until 2026-08-07 (a bare path dep on ami-forge
+# with no version); that is fixed and committed, so this flips to
+# `igata = { package = "pleme-igata", version = "0.1" }` as soon as the
+# release lands. Last pleme-io git dep in this repo.
 igata = { git = "https://github.com/pleme-io/igata" }
-shikumi = { git = "https://github.com/pleme-io/shikumi" }
+shikumi = "0.1.496"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 shellexpand = "3.1"
