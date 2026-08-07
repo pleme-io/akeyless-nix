@@ -1,0 +1,35 @@
+name: auto-release
+
+# Three-line consumer shim over the fleet's single-crate release pipeline
+# (bump → commit → tag → push → publish to crates.io), plus the `drip`
+# catch-up job that seals a skipped ship — a run that publishes nothing must
+# not report success.
+#
+# cargo-auto-release.yml, not rust-auto-release.yml: this repo is ONE crate
+# (`akeyless-install-secrets`) with no workspace members for the workspace
+# variant to find.
+#
+# KNOWN AND DELIBERATE: this repo still carries one pleme-io git dep, `igata`
+# (the crate is `pleme-igata` — repo name and crate name differ). A bare git
+# dep makes a crate unpublishable, because cargo refuses to package a
+# dependency with no version requirement, so `ship` will legitimately fail
+# until pleme-igata reaches the registry. The shim lands now rather than after,
+# because the alternative is remembering to add it later — and `drip` is built
+# so that the failure is LOUD with the remedy named, instead of a green run
+# that published nothing.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump-type:
+        description: "patch | minor | major"
+        required: false
+        default: patch
+
+jobs:
+  release:
+    uses: pleme-io/substrate/.github/workflows/cargo-auto-release.yml@main
+    with:
+      bump-type: ${{ inputs.bump-type || 'patch' }}
+    secrets: inherit
