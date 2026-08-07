@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "f9745d0949d8545b84438f8ae79cc0e4c66f9a3940b1904edcc2569ae6f5710a",
+  "cargo_lock_sha256": "ec4df632e58eeb28b096636fcef223e4d6547e9e132bb6b9979b6f59c83e807d",
   "manifest_sha256": {
-    "Cargo.toml": "c7da5d7f2e3fb41018d533beaab74fbfe54e5c7ffec140a680e73e13eb82d9b2"
+    "Cargo.toml": "ac2eb22c2b05dc694612c1b6c317a0e73f9dddc807aac2d42066bdcedb8ae803"
   },
   "target_resolves": {
     "base": {
@@ -89,7 +89,7 @@
           "rustls-tls"
         ]
       },
-      "akeyless-install-secrets-0.1.1": {
+      "akeyless-install-secrets-0.1.2": {
         "runtime_dependencies": [
           {
             "name": "akeyless_api",
@@ -8281,7 +8281,7 @@
     "akeyless-api-0.1.1": {
       "edition": "2021"
     },
-    "akeyless-install-secrets-0.1.1": {
+    "akeyless-install-secrets-0.1.2": {
       "edition": "2024",
       "binaries": [
         {
