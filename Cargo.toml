@@ -28,14 +28,33 @@ anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.40", features = ["full"] }
 akeyless-api = { version = "0.1.1", features = ["rustls-tls"] }
-# The crate is `pleme-igata` on crates.io — the repo name and the crate name
-# differ, which is exactly the kind of mismatch that makes a registry lookup
-# report "does not exist" and get misread as unpublished.
-# STILL GIT: pleme-igata is not on the registry yet. Its manifest was
-# structurally unpublishable until 2026-08-07 (a bare path dep on ami-forge
-# with no version); that is fixed and committed, so this flips to
-# `igata = { package = "pleme-igata", version = "0.1" }` as soon as the
-# release lands. Last pleme-io git dep in this repo.
+# ★ DO NOT "FIX" THIS BY POINTING IT AT crates.io. Measured 2026-08-07.
+#
+# `pleme-igata` IS on the registry now (0.1.5) and it is NOT this crate. The
+# rev pinned below is the `igata` TEMPLATE ENGINE — `[lib] name = "igata"`,
+# with `traits::TemplateRenderer` and `MiniJinjaRenderer`, which is what
+# src/template.rs imports. Commit 7477921 ("rewrite igata as Nix-first
+# Packer-compatible machine image builder", 2026-03-27) REPLACED that crate
+# wholesale in the same repo: renamed the package to `pleme-igata`, deleted
+# src/lib.rs, and shipped an unrelated machine-image builder.
+#
+# So the repo name is continuous and the CRATE is not. Flipping to
+# `{ package = "pleme-igata", version = "0.1.5" }` compiles to:
+#
+#   error[E0433]: failed to resolve: use of unresolved module or unlinked
+#                 crate `igata`     (×5)
+#
+# because the published crate is binary-only — no `src/lib.rs`, no lib target,
+# nothing to import.
+#
+# ALSO NOTE WHAT DID NOT CATCH IT: `cargo package --no-verify` SUCCEEDED on the
+# flipped manifest — 26 files, 80.9KiB — because it never compiles anything.
+# Packaging cleanly is not evidence the code builds.
+#
+# The real fix is upstream and is a DECISION, not a dep bump: either the
+# template engine gets its own crate/repo again, or this consumer moves to a
+# different renderer. Until then the rev pin is load-bearing — it is the only
+# remaining coordinate for a crate that no longer exists at its repo's HEAD.
 igata = { git = "https://github.com/pleme-io/igata" }
 shikumi = "0.1.496"
 async-trait = "0.1"
