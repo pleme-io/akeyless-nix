@@ -28,34 +28,14 @@ anyhow = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.40", features = ["full"] }
 akeyless-api = { version = "0.1.1", features = ["rustls-tls"] }
-# ★ DO NOT "FIX" THIS BY POINTING IT AT crates.io. Measured 2026-08-07.
-#
-# `pleme-igata` IS on the registry now (0.1.5) and it is NOT this crate. The
-# rev pinned below is the `igata` TEMPLATE ENGINE — `[lib] name = "igata"`,
-# with `traits::TemplateRenderer` and `MiniJinjaRenderer`, which is what
-# src/template.rs imports. Commit 7477921 ("rewrite igata as Nix-first
-# Packer-compatible machine image builder", 2026-03-27) REPLACED that crate
-# wholesale in the same repo: renamed the package to `pleme-igata`, deleted
-# src/lib.rs, and shipped an unrelated machine-image builder.
-#
-# So the repo name is continuous and the CRATE is not. Flipping to
-# `{ package = "pleme-igata", version = "0.1.5" }` compiles to:
-#
-#   error[E0433]: failed to resolve: use of unresolved module or unlinked
-#                 crate `igata`     (×5)
-#
-# because the published crate is binary-only — no `src/lib.rs`, no lib target,
-# nothing to import.
-#
-# ALSO NOTE WHAT DID NOT CATCH IT: `cargo package --no-verify` SUCCEEDED on the
-# flipped manifest — 26 files, 80.9KiB — because it never compiles anything.
-# Packaging cleanly is not evidence the code builds.
-#
-# The real fix is upstream and is a DECISION, not a dep bump: either the
-# template engine gets its own crate/repo again, or this consumer moves to a
-# different renderer. Until then the rev pin is load-bearing — it is the only
-# remaining coordinate for a crate that no longer exists at its repo's HEAD.
-igata = { git = "https://github.com/pleme-io/igata" }
+# Template rendering. This used to be a bare `git =` dep on pleme-io/igata,
+# whose crate was deleted upstream by commit 7477921 (the repo now ships an
+# unrelated machine-image builder as `pleme-igata`), leaving a rev pin as the
+# only coordinate for a crate that no longer exists at its repo's HEAD. A dep
+# with no version requirement is structurally unpublishable, so it blocked this
+# repo from releasing. The ~120-line surface came home to src/template_engine.rs
+# and now sits directly on minijinja from the registry.
+minijinja = { version = "2", features = ["custom_syntax"] }
 shikumi = "0.1.496"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

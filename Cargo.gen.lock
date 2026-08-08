@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
-  "cargo_lock_sha256": "ec4df632e58eeb28b096636fcef223e4d6547e9e132bb6b9979b6f59c83e807d",
+  "cargo_lock_sha256": "c6b98250a2f8d1668b51b2be027282f57fc49db2f35122ab53f7fab224ddf7cf",
   "manifest_sha256": {
-    "Cargo.toml": "ac2eb22c2b05dc694612c1b6c317a0e73f9dddc807aac2d42066bdcedb8ae803"
+    "Cargo.toml": "d2a8257626a291cfed55b6d1386ff2e1ee48d7e824d85d61da997eaf7a222402"
   },
   "target_resolves": {
     "base": {
-      "aho-corasick-1.1.4": {
+      "aho-corasick-1.1.5": {
         "runtime_dependencies": [],
         "build_dependencies": [],
         "features": []
@@ -158,8 +158,8 @@
             "tree": "target"
           },
           {
-            "name": "igata",
-            "package_key": "igata-0.1.0-87175c1a5007ff6272cf5401c6292493ebf06b37",
+            "name": "libc",
+            "package_key": "libc-0.2.183",
             "kind": "normal",
             "features": [],
             "uses_default_features": true,
@@ -168,10 +168,12 @@
             "tree": "target"
           },
           {
-            "name": "libc",
-            "package_key": "libc-0.2.183",
+            "name": "minijinja",
+            "package_key": "minijinja-2.17.1",
             "kind": "normal",
-            "features": [],
+            "features": [
+              "custom_syntax"
+            ],
             "uses_default_features": true,
             "optional": false,
             "target": null,
@@ -2598,78 +2600,6 @@
           "compiled_data"
         ]
       },
-      "igata-0.1.0-87175c1a5007ff6272cf5401c6292493ebf06b37": {
-        "runtime_dependencies": [
-          {
-            "name": "anyhow",
-            "package_key": "anyhow-1.0.102",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "clap",
-            "package_key": "clap-4.6.0",
-            "kind": "normal",
-            "features": [
-              "derive"
-            ],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "minijinja",
-            "package_key": "minijinja-2.17.1",
-            "kind": "normal",
-            "features": [
-              "custom_syntax"
-            ],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "serde",
-            "package_key": "serde-1.0.228",
-            "kind": "normal",
-            "features": [
-              "derive"
-            ],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "serde_json",
-            "package_key": "serde_json-1.0.149",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          },
-          {
-            "name": "thiserror",
-            "package_key": "thiserror-2.0.18",
-            "kind": "normal",
-            "features": [],
-            "uses_default_features": true,
-            "optional": false,
-            "target": null,
-            "tree": "target"
-          }
-        ],
-        "build_dependencies": [],
-        "features": []
-      },
       "indexmap-1.9.3": {
         "runtime_dependencies": [
           {
@@ -2888,7 +2818,7 @@
         "runtime_dependencies": [
           {
             "name": "aho_corasick",
-            "package_key": "aho-corasick-1.1.4",
+            "package_key": "aho-corasick-1.1.5",
             "kind": "normal",
             "features": [],
             "uses_default_features": false,
@@ -8275,7 +8205,7 @@
     }
   },
   "per_crate": {
-    "aho-corasick-1.1.4": {
+    "aho-corasick-1.1.5": {
       "edition": "2021"
     },
     "akeyless-api-0.1.1": {
@@ -8542,15 +8472,6 @@
     },
     "idna_adapter-1.2.1": {
       "edition": "2021"
-    },
-    "igata-0.1.0-87175c1a5007ff6272cf5401c6292493ebf06b37": {
-      "edition": "2024",
-      "binaries": [
-        {
-          "name": "igata",
-          "path": "src/main.rs"
-        }
-      ]
     },
     "indexmap-1.9.3": {
       "edition": "2021",
@@ -9005,8 +8926,6 @@
       "build_script": "build.rs"
     }
   },
-  "git_nar_sha256": {
-    "igata-0.1.0-87175c1a5007ff6272cf5401c6292493ebf06b37": "sha256-+aCwU95hoP6zMsFtMqg7WjIAaUAa4SXh7dNESaYN7Iw="
-  },
+  "git_nar_sha256": {},
   "flake_metadata": {}
 }

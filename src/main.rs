@@ -11,6 +11,7 @@ mod installer;
 mod manifest;
 mod platform;
 mod template;
+mod template_engine;
 #[cfg(test)]
 mod testing;
 mod traits;
