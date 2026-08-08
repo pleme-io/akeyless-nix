@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use igata::traits::TemplateRenderer;
+use crate::template_engine::TemplateRenderer;
 
 use crate::manifest::TemplateSpec;
 use crate::traits::TemplateEngine;
@@ -85,22 +85,22 @@ impl TemplateEngine for PlaceholderEngine {
 /// [% if pleme_enable_tls == "true" %]tls = on[% endif %]
 /// ```
 pub struct IgataEngine {
-    renderer: igata::MiniJinjaRenderer,
+    renderer: crate::template_engine::MiniJinjaRenderer,
 }
 
 impl IgataEngine {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            renderer: igata::MiniJinjaRenderer::default(),
+            renderer: crate::template_engine::MiniJinjaRenderer::default(),
         }
     }
 
     /// Create with custom syntax.
     #[allow(dead_code)]
-    pub fn with_syntax(syntax: igata::Syntax) -> Self {
+    pub fn with_syntax(syntax: crate::template_engine::Syntax) -> Self {
         Self {
-            renderer: igata::MiniJinjaRenderer::new(syntax),
+            renderer: crate::template_engine::MiniJinjaRenderer::new(syntax),
         }
     }
 }
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn igata_with_custom_syntax() {
-        let syntax = igata::Syntax {
+        let syntax = crate::template_engine::Syntax {
             variable: ("{{".to_string(), "}}".to_string()),
             block: ("{%".to_string(), "%}".to_string()),
             comment: ("{#".to_string(), "#}".to_string()),
